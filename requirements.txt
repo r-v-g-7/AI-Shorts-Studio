@@ -1,0 +1,21 @@
+# AI Shorts Studio - Dependencies
+# Python 3.12 & Windows 11 Compatible
+
+# Core Web & API
+fastapi>=0.115.0
+uvicorn>=0.30.0
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
+
+# Phase 2: Local Audio Engine (CPU ONNX - 0 MB VRAM)
+onnxruntime>=1.20.0
+kokoro-onnx>=0.6.0
+soundfile>=0.12.0
+
+# Phase 6: Native Hindi/Hinglish narration (Microsoft neural voices, word-level boundaries)
+edge-tts>=7.0.0
+
+# Phase 7: Chrome DevTools Protocol (CDP) Playwright Automation for Google Flow
+playwright>=1.48.0
+
