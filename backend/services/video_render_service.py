@@ -153,12 +153,88 @@ class VideoRenderService:
         return durations
 
     @classmethod
+    def validate_incoming_clips_strict(
+        cls,
+        job_id: str,
+        min_size_bytes: Optional[int] = None
+    ) -> Tuple[bool, List[int], List[str]]:
+        """
+        Strict pre-FFmpeg sanity check:
+        Verifies that EVERY scene clip in `incoming_clips/` (and `scenes/`):
+          1. Exists on disk
+          2. Has file size > 1MB (1,000,000 bytes default)
+          3. Contains a valid video stream (width > 0, height > 0, duration > 0) via ffprobe
+        Never allows blank, dummy, or missing clips to be composited.
+        """
+        min_bytes = int(
+            min_size_bytes if min_size_bytes is not None else getattr(settings, "MIN_CLIP_SIZE_BYTES", 1_000_000)
+        )
+        manifest = JobService.load_manifest(job_id)
+        if not manifest or not manifest.scenes:
+            return False, [], ["No scenes defined in job manifest."]
+
+        incoming_dir = SceneIntakeService.get_incoming_directory(job_id)
+        scenes_dir = SceneIntakeService.get_scenes_directory(job_id)
+
+        missing_scene_nums: List[int] = []
+        errors: List[str] = []
+
+        for idx, scene in enumerate(manifest.scenes):
+            scene_num = idx + 1
+            inc_clip = incoming_dir / f"scene_{scene_num:02d}.mp4"
+            scn_clip = Path(scene.clip_file) if scene.clip_file else (scenes_dir / f"scene_{scene_num:02d}.mp4")
+
+            # Sync scenes/ -> incoming_clips/ if a valid >1MB clip is only in scenes/
+            if (not inc_clip.exists() or inc_clip.stat().st_size <= min_bytes) and scn_clip.exists() and scn_clip.stat().st_size > min_bytes:
+                shutil.copy2(str(scn_clip), str(inc_clip))
+
+            if not inc_clip.exists():
+                missing_scene_nums.append(scene_num)
+                errors.append(f"Scene {scene_num}: '{inc_clip.name}' does not exist in incoming_clips/.")
+                scene.clip_file = None
+                scene.is_validated = False
+                continue
+
+            size_bytes = inc_clip.stat().st_size
+            if size_bytes <= min_bytes:
+                missing_scene_nums.append(scene_num)
+                errors.append(
+                    f"Scene {scene_num}: '{inc_clip.name}' is only {size_bytes / 1024:.1f} KB "
+                    f"(must be > {min_bytes / (1024 * 1024):.1f} MB). Rejecting blank/dummy clip."
+                )
+                scene.clip_file = None
+                scene.is_validated = False
+                continue
+
+            probe = SceneIntakeService.probe_video(inc_clip)
+            if not probe.get("is_valid"):
+                missing_scene_nums.append(scene_num)
+                errors.append(
+                    f"Scene {scene_num}: '{inc_clip.name}' failed ffprobe video stream validation ({probe.get('error')})."
+                )
+                scene.clip_file = None
+                scene.is_validated = False
+                continue
+
+            # Ensure scenes/ has the exact validated copy from incoming_clips/
+            target_scn_clip = scenes_dir / f"scene_{scene_num:02d}.mp4"
+            if not target_scn_clip.exists() or target_scn_clip.stat().st_size != size_bytes:
+                shutil.copy2(str(inc_clip), str(target_scn_clip))
+            scene.clip_file = str(target_scn_clip)
+            scene.is_validated = True
+
+        JobService.save_manifest(manifest)
+        JobService.set_scenes(job_id, manifest.scenes)
+        return len(missing_scene_nums) == 0, missing_scene_nums, errors
+
+    @classmethod
     def render_final_video(
         cls,
         job_id: str,
         bgm_path: Optional[str] = None,
         bgm_volume: float = 0.18,
-        quality_mode: QualityMode = QualityMode.BALANCED
+        quality_mode: QualityMode = QualityMode.BALANCED,
+        min_clip_size_bytes: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Orchestrates the entire video rendering stage:
@@ -181,10 +257,32 @@ class VideoRenderService:
         if not manifest.scenes:
             raise ValueError("No scenes defined in manifest.")
 
-        # Ensure all scenes have clips assigned
-        missing_clips = [s.index for s in manifest.scenes if not s.clip_file or not Path(s.clip_file).exists()]
-        if missing_clips:
-            raise ValueError(f"Missing video clips for scenes: {missing_clips}. Ingest clips first.")
+        # Strict Pre-FFmpeg Sanity Check:
+        # Every clip in incoming_clips/ MUST exist, be > 1MB, and have a valid ffprobe video stream.
+        # Never render black or dummy video if clips are missing; keep state at AWAITING_CLIPS.
+        clips_ok, missing_scene_nums, clip_errors = cls.validate_incoming_clips_strict(
+            job_id, min_size_bytes=min_clip_size_bytes
+        )
+        if not clips_ok:
+            warn_msg = (
+                f"Pre-render sanity check blocked blank/incomplete render for scenes {missing_scene_nums}: "
+                + "; ".join(clip_errors)
+                + " Keeping job in AWAITING_CLIPS."
+            )
+            logger.warning(warn_msg)
+            JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS, error_message=None)
+            JobRepository.add_log(job_id, "WARN", "RENDER_ENGINE", warn_msg)
+            return {
+                "status": "awaiting_clips",
+                "job_id": job_id,
+                "current_status": JobStatus.AWAITING_CLIPS.value,
+                "missing_scenes": missing_scene_nums,
+                "errors": clip_errors,
+                "message": warn_msg
+            }
+
+        # Reload manifest with validated scene clip_file paths
+        manifest = JobService.load_manifest(job_id)
 
         # Setup paths
         job_dir = JobService.get_job_directory(job_id)

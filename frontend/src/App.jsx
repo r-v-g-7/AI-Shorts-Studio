@@ -1,4 +1,10 @@
 const { useState, useEffect, useRef } = React;
+const VI = (typeof window !== "undefined" && window.VI) ? window.VI : function VI() { return null; };
+const jw = (typeof window !== "undefined" && window.jw) ? window.jw : function jw() { return null; };
+if (typeof window !== "undefined") {
+  window.VI = VI;
+  window.jw = jw;
+}
 
 function App() {
   const [health, setHealth] = useState(null);
@@ -281,7 +287,7 @@ function App() {
               AI Faceless Shorts Studio
               <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono font-medium">Fully Automated</span>
             </h1>
-            <p className="text-xs text-gray-400">1-Click Production • Gemini/Veo Video API • Kokoro Audio • EBU R128 Subtitles • Quality Gate</p>
+            <p className="text-xs text-gray-400">1-Click Production • Google Flow CDP • SSML / ElevenLabs Voice • EBU R128 Subtitles • Quality Gate</p>
           </div>
         </div>
 
@@ -613,9 +619,9 @@ function App() {
                     </div>
                     <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1">
                       <span>1. Script & Prompts</span>
-                      <span>2. Kokoro Voice</span>
+                      <span>2. Human Comedic Voice</span>
                       <span>3. ASS Subtitles</span>
-                      <span>4. Gemini Video API</span>
+                      <span>4. Google Flow Visuals</span>
                       <span>5. FFmpeg Render & QC</span>
                     </div>
                   </div>

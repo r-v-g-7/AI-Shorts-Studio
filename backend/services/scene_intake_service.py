@@ -136,12 +136,19 @@ class SceneIntakeService:
         return None
 
     @classmethod
-    def get_existing_and_missing_scenes(cls, job_id: str, total_scenes: int = 4) -> Tuple[List[int], List[int]]:
+    def get_existing_and_missing_scenes(
+        cls,
+        job_id: str,
+        total_scenes: int = 4,
+        min_size_bytes: Optional[int] = None,
+    ) -> Tuple[List[int], List[int]]:
         """
         Scans storage/jobs/<job_id>/incoming_clips/ (and scenes/) for valid existing scene_0X.mp4 files.
+        Every clip MUST exist, exceed min_size_bytes (> 1MB default), and contain a valid video stream via ffprobe.
         Returns (existing_indices_0_based, missing_indices_0_based).
         Also ensures valid clips in incoming_clips/ are synced to scenes/ and vice-versa.
         """
+        min_bytes = int(min_size_bytes if min_size_bytes is not None else getattr(settings, "MIN_CLIP_SIZE_BYTES", 1_000_000))
         manifest = JobService.load_manifest(job_id)
         scene_count = len(manifest.scenes) if (manifest and manifest.scenes) else total_scenes
 
@@ -157,18 +164,18 @@ class SceneIntakeService:
             scn_file = scenes_dir / f"scene_{scene_num:02d}.mp4"
 
             valid_path: Optional[Path] = None
-            if inc_file.exists() and inc_file.stat().st_size > 1000:
+            if inc_file.exists() and inc_file.stat().st_size > min_bytes:
                 probe = cls.probe_video(inc_file)
                 if probe["is_valid"]:
                     valid_path = inc_file
                     if not scn_file.exists() or inc_file.stat().st_mtime > scn_file.stat().st_mtime:
                         shutil.copy2(str(inc_file), str(scn_file))
 
-            if valid_path is None and scn_file.exists() and scn_file.stat().st_size > 1000:
+            if valid_path is None and scn_file.exists() and scn_file.stat().st_size > min_bytes:
                 probe = cls.probe_video(scn_file)
                 if probe["is_valid"]:
                     valid_path = scn_file
-                    if not inc_file.exists():
+                    if not inc_file.exists() or scn_file.stat().st_size > inc_file.stat().st_size:
                         shutil.copy2(str(scn_file), str(inc_file))
 
             if valid_path is not None:
@@ -179,11 +186,12 @@ class SceneIntakeService:
         return existing, missing
 
     @classmethod
-    def scan_and_ingest(cls, job_id: str) -> Dict[str, Any]:
+    def scan_and_ingest(cls, job_id: str, min_size_bytes: Optional[int] = None) -> Dict[str, Any]:
         """
-        Scans incoming_clips/ for the job, validates video integrity via FFprobe,
+        Scans incoming_clips/ for the job, validates video integrity via FFprobe and minimum file size (> 1MB),
         matches files to scenes, assigns them safely, and preserves originals.
         """
+        min_bytes = int(min_size_bytes if min_size_bytes is not None else getattr(settings, "MIN_CLIP_SIZE_BYTES", 1_000_000))
         manifest = JobService.load_manifest(job_id)
         if not manifest:
             raise ValueError(f"Job manifest for '{job_id}' not found.")
@@ -201,10 +209,17 @@ class SceneIntakeService:
             if f.is_file() and f.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
         ]
 
-        # 2. Probe and validate all incoming files
+        # 2. Probe and validate all incoming files (must be valid video stream AND > 1MB)
         probed_files: List[Dict[str, Any]] = []
         for f in incoming_files:
             meta = cls.probe_video(f)
+            if meta.get("is_valid") and int(meta.get("size_bytes", 0)) <= min_bytes:
+                meta["is_valid"] = False
+                meta["error"] = (
+                    f"Clip '{f.name}' is too small ({meta.get('size_bytes', 0)} bytes <= {min_bytes} bytes / 1MB); "
+                    "ignoring dummy/incomplete clip."
+                )
+                logger.warning(meta["error"])
             probed_files.append(meta)
 
         # 3. Match candidate files to scene indices
@@ -252,13 +267,16 @@ class SceneIntakeService:
                     f"Job '{job_id}' Scene {scene_idx + 1} has multiple candidates: {duplicates_detected[scene_idx]}"
                 )
 
-        # Check existing assigned scenes in scenes_dir
+        # Check existing assigned scenes in scenes_dir (must also exceed min_bytes and pass ffprobe)
         for idx in range(scene_count):
             if idx not in assigned_scenes:
                 expected_scene_file = scenes_dir / f"scene_{idx + 1:02d}.mp4"
-                if expected_scene_file.exists():
+                if expected_scene_file.exists() and expected_scene_file.stat().st_size > min_bytes:
                     probe = cls.probe_video(expected_scene_file)
                     if probe["is_valid"]:
+                        inc_copy = incoming_dir / f"scene_{idx + 1:02d}.mp4"
+                        if not inc_copy.exists() or inc_copy.stat().st_size <= min_bytes:
+                            shutil.copy2(str(expected_scene_file), str(inc_copy))
                         manifest.scenes[idx].clip_file = str(expected_scene_file)
                         manifest.scenes[idx].is_validated = True
                         assigned_scenes[idx] = {
@@ -267,6 +285,12 @@ class SceneIntakeService:
                             "original_filename": expected_scene_file.name,
                             "probe_metadata": probe
                         }
+                    else:
+                        manifest.scenes[idx].clip_file = None
+                        manifest.scenes[idx].is_validated = False
+                else:
+                    manifest.scenes[idx].clip_file = None
+                    manifest.scenes[idx].is_validated = False
 
         # 5. Persist updates to manifest & SQLite
         JobService.save_manifest(manifest)

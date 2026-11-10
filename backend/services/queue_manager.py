@@ -322,11 +322,17 @@ class ProductionQueueManager:
             q_mode = QualityMode(quality_mode_val) if quality_mode_val in QualityMode.__members__ else QualityMode.BALANCED
 
             from backend.services.video_render_service import VideoRenderService
-            VideoRenderService.render_final_video(
+            render_res = VideoRenderService.render_final_video(
                 job_id=job_id,
                 bgm_path=bgm_path,
                 quality_mode=q_mode
             )
+            if render_res.get("status") == "awaiting_clips":
+                item.current_stage = "AWAITING_CLIPS"
+                item.progress_percent = 70
+                JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS)
+                logger.info(f"ProductionQueueWorker: Job '{job_id}' held at AWAITING_CLIPS by pre-render sanity check.")
+                return
 
             item.current_stage = "QC_VERIFIED"
             item.progress_percent = 100
@@ -398,11 +404,17 @@ class ProductionQueueManager:
             q_mode = QualityMode(quality_mode_val) if quality_mode_val in QualityMode.__members__ else QualityMode.BALANCED
 
             from backend.services.video_render_service import VideoRenderService
-            VideoRenderService.render_final_video(
+            render_res = VideoRenderService.render_final_video(
                 job_id=job_id,
                 bgm_path=bgm_path,
                 quality_mode=q_mode
             )
+            if render_res.get("status") == "awaiting_clips":
+                item.current_stage = "AWAITING_CLIPS"
+                item.progress_percent = 70
+                JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS)
+                logger.info(f"ProductionQueueWorker: Job '{job_id}' held at AWAITING_CLIPS by pre-render sanity check.")
+                return
 
             item.current_stage = "QC_VERIFIED"
             item.progress_percent = 100

@@ -4,6 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Faceless Shorts Studio</title>
+  <script>
+    // Guard against undefined global bundle identifiers (VI, jw) in standalone/extension contexts
+    window.VI = window.VI || function VI() { return null; };
+    window.jw = window.jw || function jw() { return null; };
+    var VI = window.VI;
+    var jw = window.jw;
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -38,8 +45,6 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Lucide icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
   <link rel="stylesheet" href="./src/styles.css" />
 </head>
 <body class="bg-studio-900 text-gray-100 font-sans antialiased min-h-screen">
