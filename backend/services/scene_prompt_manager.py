@@ -270,42 +270,54 @@ class ScenePromptManager:
         style_key = style_override or script.visual_style
         profile = STYLE_PROFILES.get(style_key, STYLE_PROFILES[VisualStyle.DEEP_DIVE_3D])
 
-        # Character & Environment anchors
+        # Concise Character & Environment tokens (never repeat a 60-word character block in every scene)
         if visual_reference and visual_reference.primary_character:
             char = visual_reference.primary_character
-            char_anchor = f"Subject: {char.name}, {char.appearance}, wearing {char.clothing}. Key feature: {char.distinctive_features}."
+            concise_char = f"Character: {char.name} ({char.distinctive_features})."
         else:
-            char_anchor = f"Subject: {profile['character_consistency']}."
+            concise_char = f"Character: {profile['default_character']['name']}."
 
         if visual_reference and visual_reference.environment:
             env = visual_reference.environment
-            palette_str = ", ".join(env.color_palette)
-            env_anchor = f"Setting: {env.setting_name}. Lighting: {env.lighting_conditions}. Atmosphere: {env.atmosphere}. Palette: [{palette_str}]."
+            concise_env = f"Setting: {env.setting_name} ({env.lighting_conditions})."
         else:
-            env_anchor = f"Environment: {profile['environment']}."
+            concise_env = f"Setting: {profile['default_environment']['setting_name']}."
 
         negative_text = visual_reference.negative_instructions if visual_reference else profile["negative_prompt"]
 
         production_prompts: List[Dict[str, Any]] = []
-        beat_labels = ["Hook", "Escalation", "Boiling point", "Absurd punchline"]
+        beat_labels = [
+            "Hook / Extreme Macro",
+            "Escalation / Chaos Action",
+            "Meltdown / POV Tension",
+            "Climax / Absurd Payoff",
+        ]
+        fallback_cameras = [
+            "Low-angle worm's-eye macro probe shot peering upward, f/2.0 shallow depth of field",
+            "Medium wide profile shot with dynamic pan across chaotic environment action, 35mm lens",
+            "Dutch-angle extreme close-up with high-tension handheld vibration and volumetric steam",
+            "High-speed vertical tracking shot tilting straight upward following explosive motion, 60fps",
+        ]
 
         for scene in script.scenes:
-            camera = scene.camera_movement or profile["camera_default"]
-            beat_name = beat_labels[scene.index] if scene.index < len(beat_labels) else f"Beat {scene.index + 1}"
+            idx = scene.index
+            camera = scene.camera_movement or (
+                fallback_cameras[idx] if idx < len(fallback_cameras) else profile["camera_default"]
+            )
+            beat_name = beat_labels[idx] if idx < len(beat_labels) else f"Beat {idx + 1}"
 
-            # Formulate the Google Flow / Veo prompt
+            # Formulate the Google Flow / Veo prompt:
+            # Focus 70%+ of prompt tokens on the scene's unique camera framing, environment shift, and action beat
             full_prompt = (
-                f"9:16 vertical video. {profile['aesthetic']}. "
-                f"Beat {scene.index + 1} ({beat_name}): {scene.visual_description}. "
-                f"{char_anchor} "
-                f"{env_anchor} "
-                f"Cinematography: {camera}. "
-                f"Duration: {scene.estimated_duration_seconds:.1f}s. Ultra-high definition, cinematic lighting."
+                f"{scene.visual_description}. "
+                f"Camera: {camera}. "
+                f"{concise_char} {concise_env} "
+                f"Style: {profile['name']}, Pixar-grade 3D, 9:16 vertical."
             )
 
             prompt_entry = {
-                "scene_index": scene.index,
-                "scene_id": f"scene_{scene.index + 1:02d}",
+                "scene_index": idx,
+                "scene_id": f"scene_{idx + 1:02d}",
                 "beat": beat_name,
                 "narration": scene.narration,
                 "duration_seconds": scene.estimated_duration_seconds,
@@ -314,7 +326,7 @@ class ScenePromptManager:
                 "production_prompt": full_prompt,
                 "camera_directive": camera,
                 "negative_prompt": negative_text,
-                "suggested_filename": f"scene_{scene.index + 1:02d}.mp4"
+                "suggested_filename": f"scene_{idx + 1:02d}.mp4"
             }
             production_prompts.append(prompt_entry)
 

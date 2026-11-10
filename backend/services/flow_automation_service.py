@@ -515,6 +515,128 @@ class FlowAutomationService:
             pass
         return None
 
+    async def _snapshot_canvas_cards(self, page) -> Dict[str, Any]:
+        """
+        Snapshots all existing video and thumbnail cards on the Google Flow canvas
+        (`video`, `flow-video-tile`, `img[src*="/asb/"]`, `div[role="button"]:has(video)`).
+        Because Google Flow renders completed canvas cards as `<flow-video-tile>` containing
+        `<img class="thumbnail" src="https://flow.google.com/asb/...">` when unselected,
+        tracking both `<video>` and `<flow-video-tile>` ensures 100% accurate completion detection.
+        """
+        try:
+            data = await page.evaluate(
+                """() => {
+                    const videos = Array.from(document.querySelectorAll('video'));
+                    const tiles = Array.from(document.querySelectorAll('flow-video-tile'));
+                    const thumbImgs = Array.from(document.querySelectorAll('flow-video-tile img, img.thumbnail, img[src*="/asb/"]'));
+                    const videoSrcs = videos.map(v => v.currentSrc || v.src || '').filter(Boolean);
+                    const thumbSrcs = thumbImgs.map(img => img.currentSrc || img.src || '').filter(Boolean);
+                    return {
+                        videoCount: videos.length,
+                        tileCount: tiles.length,
+                        videoSrcs,
+                        thumbSrcs,
+                    };
+                }"""
+            )
+            return {
+                "video_count": int(data.get("videoCount", 0)),
+                "tile_count": int(data.get("tileCount", 0)),
+                "video_srcs": set(data.get("videoSrcs", [])),
+                "thumb_srcs": set(data.get("thumbSrcs", [])),
+            }
+        except Exception:
+            return {"video_count": 0, "tile_count": 0, "video_srcs": set(), "thumb_srcs": set()}
+
+    async def _focus_newest_video_card(
+        self,
+        page,
+        prev_video_srcs: set,
+        prev_thumb_srcs: Optional[set] = None,
+    ) -> bool:
+        """
+        Requirement 2: Fix Card Focus & Inspector Download.
+        When Scene X generation finishes:
+          1. Locate the newest video card on the Flow canvas:
+             - Match any newly added `flow-video-tile` / `video` whose thumbnail or video `src` was not in baseline,
+             - Or top-most newly added `flow-video-tile` (`page.locator('flow-video-tile').first`),
+             - Or `page.locator('video, div[role="button"]:has(video)').last`.
+          2. Click that specific card directly to focus it and bring up its dedicated right-hand inspector panel.
+          3. Wait 1000ms (`await page.wait_for_timeout(1000)`) for the inspector panel DOM to reflect the new video.
+        """
+        prev_thumbs = prev_thumb_srcs or set()
+        try:
+            new_card_handle = await page.evaluate_handle(
+                """({prevVidSrcs, prevThumbSrcs}) => {
+                    const prevVids = new Set(prevVidSrcs || []);
+                    const prevThumbs = new Set(prevThumbSrcs || []);
+                    const vw = window.innerWidth || 1440;
+
+                    // 1. Check <flow-video-tile> cards on the canvas (top-most is newest in Google Flow)
+                    const tiles = Array.from(document.querySelectorAll('flow-video-tile')).filter(t => {
+                        const r = t.getBoundingClientRect();
+                        return r.width > 30 && r.height > 30 && r.left < vw * 0.68;
+                    });
+                    for (const t of tiles) {
+                        const img = t.querySelector('img');
+                        const vid = t.querySelector('video');
+                        const imgSrc = img ? (img.currentSrc || img.src || '') : '';
+                        const vidSrc = vid ? (vid.currentSrc || vid.src || '') : '';
+                        if ((imgSrc && !prevThumbs.has(imgSrc)) || (vidSrc && !prevVids.has(vidSrc))) {
+                            return t;
+                        }
+                    }
+
+                    // 2. Check standalone <video> or div[role="button"]:has(video) on the canvas
+                    const allVideos = Array.from(document.querySelectorAll('video')).filter(v => {
+                        const r = v.getBoundingClientRect();
+                        return r.width > 20 && r.height > 20 && r.left < vw * 0.68;
+                    });
+                    for (const v of allVideos) {
+                        const src = v.currentSrc || v.src || '';
+                        if (src && !prevVids.has(src)) {
+                            return v.closest('div[role="button"]') || v.closest('flow-video-tile') || v;
+                        }
+                    }
+
+                    // 3. Top-most flow-video-tile on canvas (Tile 0 is the most recently generated card)
+                    if (tiles.length > 0) {
+                        return tiles[0];
+                    }
+                    if (allVideos.length > 0) {
+                        const target = allVideos[allVideos.length - 1];
+                        return target.closest('div[role="button"]') || target;
+                    }
+                    return null;
+                }""",
+                {"prevVidSrcs": list(prev_video_srcs), "prevThumbSrcs": list(prev_thumbs)},
+            )
+            elem = new_card_handle.as_element()
+            if elem is not None:
+                await elem.click(timeout=3000)
+                logger.info("[FlowCDP] Clicked newest video card on canvas to focus its right-hand inspector panel.")
+                await page.wait_for_timeout(1000)
+                return True
+        except Exception as e:
+            logger.debug(f"[FlowCDP] Primary newest-card focus note: {e}")
+
+        # Fallback to explicit Playwright locators (`flow-video-tile` and `video, div[role="button"]:has(video)`)
+        fallback_locators = [
+            page.locator("flow-video-tile").first,
+            page.locator('video, div[role="button"]:has(video)').last,
+        ]
+        for card_loc in fallback_locators:
+            try:
+                if await card_loc.count() > 0 and await card_loc.is_visible():
+                    await card_loc.click(timeout=3000)
+                    logger.info("[FlowCDP] Clicked fallback video card locator to focus right-hand inspector.")
+                    await page.wait_for_timeout(1000)
+                    return True
+            except Exception as e:
+                logger.debug(f"[FlowCDP] Fallback card locator focus note: {e}")
+
+        return False
+
     async def _find_inspector_download_button(self, page):
         """
         Locates the completed video download button in Google Flow's right-hand detail panel
@@ -619,15 +741,12 @@ class FlowAutomationService:
         # Ensure any previous scene's right-hand inspector detail panel is closed BEFORE snapshotting
         await self._close_inspector_panel(page)
 
-        # Snapshot current video elements and Downloads folder state before submitting
-        prev_video_count = await page.locator("video").count()
-        prev_video_srcs = set(
-            await page.evaluate(
-                """() => Array.from(document.querySelectorAll('video'))
-                    .map(v => v.currentSrc || v.src || '')
-                    .filter(Boolean)"""
-            )
-        )
+        # Snapshot current canvas cards (<video>, <flow-video-tile>, thumbnails) and Downloads folder state
+        baseline_cards = await self._snapshot_canvas_cards(page)
+        prev_video_count = baseline_cards["video_count"]
+        prev_tile_count = baseline_cards["tile_count"]
+        prev_video_srcs = baseline_cards["video_srcs"]
+        prev_thumb_srcs = baseline_cards["thumb_srcs"]
         downloads_baseline = await self._snapshot_existing_downloads()
         submit_timestamp = time.time()
 
@@ -663,33 +782,37 @@ class FlowAutomationService:
                 logger.info(f"[FlowCDP] Moved new download from Downloads folder -> {target_download_file}")
                 break
 
-            # B. Check if generation has completed (strictly require a NEW <video> element or NEW <video src>)
-            curr_video_count = await page.locator("video").count()
-            curr_video_srcs = await page.evaluate(
-                """() => Array.from(document.querySelectorAll('video'))
-                    .map(v => v.currentSrc || v.src || '')
-                    .filter(Boolean)"""
-            )
+            # B. Check if generation has completed (new <video>, new <flow-video-tile>, or new thumbnail src)
+            curr_cards = await self._snapshot_canvas_cards(page)
+            curr_video_count = curr_cards["video_count"]
+            curr_tile_count = curr_cards["tile_count"]
+            curr_video_srcs = list(curr_cards["video_srcs"])
             new_srcs = [s for s in curr_video_srcs if s not in prev_video_srcs]
-            video_finished = curr_video_count > prev_video_count or len(new_srcs) > 0
+            new_thumbs = [t for t in curr_cards["thumb_srcs"] if t not in prev_thumb_srcs]
+
+            video_finished = (
+                curr_video_count > prev_video_count
+                or curr_tile_count > prev_tile_count
+                or len(new_srcs) > 0
+                or len(new_thumbs) > 0
+            )
 
             if not video_finished:
                 continue
 
-            # Only look for the inspector download button AFTER the new video has finished generating
-            dl_btn = await self._find_inspector_download_button(page)
+            # Requirement 2: Always click the newly completed video card directly to focus it
+            # and switch the right-hand inspector panel to Scene X (waiting 1000ms for DOM update)
+            if not clicked_video_to_open_inspector:
+                clicked_video_to_open_inspector = await self._focus_newest_video_card(
+                    page, prev_video_srcs, prev_thumb_srcs=prev_thumb_srcs
+                )
 
-            if dl_btn is None and not clicked_video_to_open_inspector:
-                # Click the newly completed video tile once to open the right-hand detail inspector panel
-                try:
-                    newest_video = page.locator("video").first
-                    if await newest_video.is_visible():
-                        await newest_video.click(timeout=2000)
-                        clicked_video_to_open_inspector = True
-                        await page.wait_for_timeout(600)
-                        dl_btn = await self._find_inspector_download_button(page)
-                except Exception:
-                    pass
+            # Locate the download button (`⤓`) inside the active right-hand inspector section
+            dl_btn = await self._find_inspector_download_button(page)
+            if dl_btn is None:
+                # Re-attempt focusing the newest card via `page.locator('video, div[role="button"]:has(video)').last`
+                await self._focus_newest_video_card(page, prev_video_srcs, prev_thumb_srcs=prev_thumb_srcs)
+                dl_btn = await self._find_inspector_download_button(page)
 
             # Single-Fire Download Debounce: click inspector download button (`⤓`) EXACTLY ONCE
             if dl_btn is not None and not download_triggered:

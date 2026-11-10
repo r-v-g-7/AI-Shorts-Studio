@@ -127,12 +127,13 @@ MODE SELECTION & DIRECTIVES:
 - 100% CONVERSATIONAL DELHI/UP HOUSEHOLD HINDI: Write a hilarious, sarcastic, unfiltered first-person POV monologue in Romanized Hindi ("Arre yaar...", "Kasam se keh raha hoon...", "Abhi safety valve udha doonga!"). Zero English sentences, zero textbook Hindi!
 - PRESERVE USER'S SPECIFIC DETAILS: If the user mentions specific brands, numbers, or threats (e.g., "Prestige cooker", "joint family", "8 whistles / aath seeti", "boiling dal", "safety valve into the ceiling fan / pankha"), weave every single one of those details into the Hindi monologue!
 - STAND-UP CADENCE & PUNCTUATION: Use short punchy sentences, ellipses (`...`) before punchlines, rhetorical questions (`?`), commas (`,`), and exclamation marks (`!`) for oral stand-up delivery.
-- STRICT 4 ESCALATING BEATS:
-  * Scene 1 (Hook): Explosive, sarcastic introduction and immediate grievance.
-  * Scene 2 (Escalation): The absurd daily torture by the household members.
-  * Scene 3 (Boiling Point): Peak pressure, physical rattling/sparks/steam, about to snap.
-  * Scene 4 (Absurd Punchline): Unhinged, hilarious threat or Mic-drop twist.
-- EXPRESSIVE 3D ANTHROPOMORPHIC VISUALS: Every scene's "visual_description" (in English) MUST depict the sentient object in Pixar-grade 3D with expressive eyes, eyebrows, mouth, steam/sparks/motion, and comedic physical reactions in 9:16 vertical framing.
+- DYNAMIC VISUAL BEAT GENERATION & CAMERA CHOREOGRAPHY (ZERO REPETITIVE PROMPTS):
+  * Do NOT repeat a long 60-word character appearance description in every scene. Establish concise character tokens once, then focus 70% of each scene's prompt tokens on distinct physical action, environment shift, and a radically different camera angle:
+    - Scene 1 (Hook / Extreme Macro): Low-angle worm's-eye macro probe shot (e.g. under the stove peering up through roaring blue gas flames at the character's twitching bloodshot eyes, moody rim lighting, 9:16 vertical).
+    - Scene 2 (Escalation / Chaos Action): Medium wide profile shot in a crowded environment (e.g. a hurried human hand recklessly jerks the gas knob to maximum high, gas burners roar, milk pan spills in the background, character trembling violently).
+    - Scene 3 (Meltdown / POV Tension): Dutch-angle close-up (e.g. metallic body bulging outward, cheeks turning cherry-red, safety valve stretching upward under insane pressure, white steam jets blinding the lens).
+    - Scene 4 (Climax / Absurd Payoff): High-speed vertical tracking shot (e.g. looking straight up at the spinning white ceiling fan as the brass whistle rockets upward like a missile, crashing into the rotating fan blades with flying dal splatters and falling plaster).
+  * Every scene MUST have an unmistakably unique `"camera_movement"` (Worm's-eye Macro -> Medium Wide Profile -> Dutch-angle Macro -> High-speed Vertical Tracking Upward).
 
 2. CINEMATIC STORY MODE (When input contains an original story, characters, fictional plot beats, or dialogue):
 - Preserve all characters, plot beats, and verbatim Roman Hinglish quotes across 4 scenes.
@@ -246,146 +247,163 @@ class ManualLLMProvider(BaseLLMProvider):
         scene_count = 4
         base_dur = round(total_dur / scene_count, 1)
 
+        # Distinct 4-beat camera choreography (never repeat static framing)
+        beat_cameras = [
+            "Low-angle worm's-eye macro probe shot peering upward, f/2.0 shallow depth of field",
+            "Medium wide profile shot with dynamic pan across chaotic environment action, 35mm lens",
+            "Dutch-angle extreme close-up with high-tension handheld vibration and volumetric steam",
+            "High-speed vertical tracking shot tilting straight upward following explosive motion, 60fps",
+        ]
+
         if any(k in t_lower for k in ("cooker", "seeti", "prestige", "whistle", "safety valve")):
             brand = "Prestige Pressure Cooker" if "prestige" in t_lower else "Pressure Cooker"
             whistle_cnt = "aath-aath" if ("8" in t_lower or "eight" in t_lower or "aath" in t_lower) else "paanch-paanch"
             family_tag = "is joint family ka" if "joint family" in t_lower else "tumhare ghar ka"
             title = "Delhi Ke Pressure Cooker Kaun Sunega?"
-            obj_desc = (
-                f"anthropomorphic battered aluminum Indian {brand} with expressive bloodshot 3D Pixar eyes, "
-                "furrowed metallic eyebrows, dented body, and a trembling steam whistle hat"
-            )
-            setting_desc = "chaotic Indian joint-family kitchen gas stove with roaring blue flames, boiling yellow dal splatters, and a spinning ceiling fan overhead"
+            core_char = f"3D Pixar-style battered aluminum {brand}"
 
             scenes_data = [
-                # Beat 1: Hook
+                # Scene 1 (Hook / Extreme Macro)
                 (
                     f"Arre yaar... thoda toh reham karo! Main koi fauji tank nahi, {family_tag} budha {brand} hoon! "
                     "Kasam se keh raha hoon... subah aankh khulte hi mera gala daba dete hain yeh log!",
-                    f"Macro close-up of an {obj_desc} sitting on a {setting_desc}, glaring directly into the camera lens with twitching angry eyes and hissing steam from its ears",
+                    f"Low-angle worm's-eye macro probe shot under the stove, peering up at the {core_char}'s twitching bloodshot eyes through roaring blue gas flames, moody rim lighting, 9:16 vertical",
+                    beat_cameras[0],
                     ["hissing steam buildup", "comedic tabla slap"]
                 ),
-                # Beat 2: Escalation
+                # Scene 2 (Escalation / Chaos Action)
                 (
                     f"Bhai sahab, pet mein khaulti hui peeli daal bhar ke, har subah mujhse {whistle_cnt} seeti bajwaate hain! "
                     "Arre do seeti mein daal gal jaati hai... par kya inhe meri cheekhein sunai nahi deti?",
-                    f"The {obj_desc} rattling violently on a roaring high blue gas flame, cheeks glowing cherry-red as thick yellow dal bubbles leak from its shaking lid in the {setting_desc}",
+                    f"Medium wide profile shot in a crowded morning kitchen: a hurried human hand recklessly jerks the gas knob to maximum high, gas burners roar, milk pan spills in the background, {core_char} trembling violently",
+                    beat_cameras[1],
                     ["rapid metal rattling", "loud whistle screech"]
                 ),
-                # Beat 3: Boiling Point
+                # Scene 3 (Meltdown / POV Tension)
                 (
                     "Kal toh dimag ka dahi ho gaya! Gas full pe chhod ke sab baahar batiyaane chale gaye... "
                     "mera dhakkan kaanp raha hai, neeche se aag jala rahi hai, aur pressure se meri aakhein baahar aa gayi!",
-                    f"Extreme low-angle dramatic shot of the {obj_desc} bulging like a cartoon bomb under intense pressure, holding onto its trembling whistle with both metallic handles as steam fills the {setting_desc}",
+                    f"Dutch-angle close-up: {core_char} body bulging outward, metallic cheeks turning cherry-red, safety valve stretching upward under insane pressure, white steam jets blinding the lens",
+                    beat_cameras[2],
                     ["boiling pressure rumble", "panicked heartbeat thump"]
                 ),
-                # Beat 4: Absurd Punchline
+                # Scene 4 (Climax / Absurd Payoff)
                 (
                     "Kaan khol ke sun lo! Ab agar kisi ne gas full pe ghumaaya na... "
                     "toh abhi apna safety valve udha ke seedha upar ghoomte pankhe mein de maarunga! Phir chhat se daal chaatte phirna!",
-                    f"The {obj_desc} smirking savagely as it aims its glowing red safety valve like a missile straight up toward the spinning kitchen ceiling fan, covered in comic dal splatters in the {setting_desc}",
+                    "High-speed vertical tracking shot looking straight up at the spinning white ceiling fan: the brass whistle rockets upward like a missile, crashing into the rotating fan blades with flying dal splatters and falling plaster",
+                    beat_cameras[3],
                     ["missile lock beep", "comic explosion punchline sting"]
                 ),
             ]
         elif any(k in t_lower for k in ("kettle", "chai", "patila", "tapeli")):
             title = "Chai Ke Patile Ka Roz Ka Rona"
-            obj_desc = "anthropomorphic dented aluminum Indian chai patila (tea saucepan) with expressive 3D Pixar eyes, blackened bottom, and bubbling masala chai crown"
-            setting_desc = "steamy Indian kitchen gas burner with crushed ginger, elaichi pods, and tea strainer"
+            core_char = "3D Pixar-style dented aluminum chai patila"
             scenes_data = [
-                # Beat 1: Hook
+                # Scene 1 (Hook / Extreme Macro)
                 (
                     "Arre yaar... main koi aansu ponchhne waala rumal nahi, is ghar ka Chai ka Patila hoon! "
                     "Dil tumhara tootta hai... aur aag pe har roz mujhe jalaaya jaata hai!",
-                    f"Macro close-up of an {obj_desc} on a lit gas stove in a {setting_desc}, rolling its eyes sarcastically as milk splashes onto its head",
+                    f"Low-angle worm's-eye macro probe shot under the gas grate, peering up through roaring blue flames at the {core_char}'s sarcastic rolling eyes as milk splashes overhead, moody rim lighting, 9:16 vertical",
+                    beat_cameras[0],
                     ["milk splash", "sarcastic sigh"]
                 ),
-                # Beat 2: Escalation
+                # Scene 2 (Escalation / Chaos Action)
                 (
                     "Subah ho ya raat, adrak koot-koot ke mere sar pe maarte ho! "
                     "Aur jaise hi mera ubaal aane waala hota hai... gas kam karne ke bajaye phone leke gayab ho jaate ho?",
-                    f"The {obj_desc} wincing as crushed ginger drops into its boiling masala chai while frothy foam rises dangerously to the rim in the {setting_desc}",
+                    f"Medium wide profile shot in a crowded Indian kitchen: a heavy metal pestle crushes ginger on the counter while a hurried hand cranks the burner knob to high, leaving the {core_char} rattling as foam rises",
+                    beat_cameras[1],
                     ["mortar pestle thud", "rising foam sizzle"]
                 ),
-                # Beat 3: Boiling Point
+                # Scene 3 (Meltdown / POV Tension)
                 (
                     "Kasam se keh raha hoon, meri saansein phool rahi hain, jhaag gale tak aa gaya hai... "
                     "par majaal hai ki koi gas ki knob ghuma de!",
-                    f"Dramatic close-up of the {obj_desc} puffing its metallic cheeks at boiling point as brown chai foam erupts over its rim in slow motion",
+                    f"Dutch-angle close-up: {core_char} metallic cheeks puffing cherry-red at boiling point, thick masala chai foam surging over the dented rim in slow motion, hot steam fogging the lens",
+                    beat_cameras[2],
                     ["intense bubbling boil", "dramatic riser"]
                 ),
-                # Beat 4: Absurd Punchline
+                # Scene 4 (Climax / Absurd Payoff)
                 (
                     "Toh lo phir! Abhi ubal ke poore gas chulhe pe phail jaunga... "
                     "aur haan, sink mein sookhne chhoda na, toh kal subah ki chai mein mirchi milegi!",
-                    f"The {obj_desc} grinning wickedly as chai overflows across the burner, crossing its handles with a savage attitude in the {setting_desc}",
+                    "High-speed vertical tracking shot following a geyser of boiling masala chai erupting upward and cascading across the glass stove top in dramatic slow-motion splatters",
+                    beat_cameras[3],
                     ["liquid sizzle", "comic bass drop"]
                 ),
             ]
         elif any(k in t_lower for k in ("battery", "phone", "charger")):
             title = "1% Phone Battery Ki Aakhri Dhamki"
-            obj_desc = "anthropomorphic glowing 3D smartphone battery character with exhausted bloodshot Pixar eyes, bandages, and a flickering red 1% meter"
-            setting_desc = "glowing neon smartphone circuit board interior"
+            core_char = "3D Pixar-style glowing smartphone battery character"
             scenes_data = [
-                # Beat 1: Hook
+                # Scene 1 (Hook / Extreme Macro)
                 (
                     "Arre bhai, bas kar yaar! Main tere phone ki aakhri ek percent bachi hui Battery hoon! "
                     "Meri aatma nikalne waali hai... aur tu abhi bhi kambal mein ghus ke reels chala raha hai!",
-                    f"Close-up of an {obj_desc} gasping for air inside a {setting_desc}, clutching a flickering red '1%' sign",
+                    f"Low-angle worm's-eye macro probe shot inside a dark neon motherboard, peering up at the {core_char}'s bloodshot twitching eyes under a flickering red '1%' warning hologram, 9:16 vertical",
+                    beat_cameras[0],
                     ["low battery beep", "heavy panting"]
                 ),
-                # Beat 2: Escalation
+                # Scene 2 (Escalation / Chaos Action)
                 (
                     "Brightness poori sau pe rakhi hai, peeche pachaas apps khule pade hain... "
                     "aur charger bilkul takiye ke paas pada hai, par nawab sahab se haath nahi hilaaya jaata?",
-                    f"The {obj_desc} sweating and trembling under a massive stack of glowing social media app icons inside the {setting_desc}",
+                    f"Medium wide profile shot in a dim bedroom: a thumb endlessly scrolls blindingly bright reels under a blanket while a white charger cable dangles untouched beside the pillow, {core_char} trembling inside screen",
+                    beat_cameras[1],
                     ["electric spark", "cartoon groan"]
                 ),
-                # Beat 3: Boiling Point
+                # Scene 3 (Meltdown / POV Tension)
                 (
                     "Kasam se keh raha hoon, jab main assi percent thi tab toh bhaav nahi diya... "
                     "ab meri saans ruk rahi hai toh socket dhoondhne bhaag raha hai!",
-                    f"Dramatic slow-motion shot of the {obj_desc} staggering toward a distant lightning port as the circuit lights flicker dark",
+                    f"Dutch-angle close-up: {core_char} body overheating cherry-red, voltage arcs sparking across copper circuits, warning sirens flashing as power drains to zero",
+                    beat_cameras[2],
                     ["alarm siren", "power-down hum"]
                 ),
-                # Beat 4: Absurd Punchline
+                # Scene 4 (Climax / Absurd Payoff)
                 (
                     "Le beta... charger ki pin ghusne se theek ek second pehle, main toh chali! "
                     "Ab baith ke kaale screen mein apni shakal dekh!",
-                    f"The {obj_desc} winking mischievously and pulling a giant master switch to black with a smug grin",
+                    "High-speed vertical tracking shot following a charging cable rushing toward the phone port, snapping to pitch-black screen shutdown one millimeter before contact with a comic spark",
+                    beat_cameras[3],
                     ["switch click", "savage bass drop"]
                 ),
             ]
         elif any(k in t_lower for k in ("500", "note", "rupee", "paisa")):
             title = "₹500 Ke Note Ki Dardnak Kahaani"
-            obj_desc = "anthropomorphic crisp ₹500 Indian currency note character with expressive 3D Pixar eyes, paper hands, and royal attitude"
-            setting_desc = "busy Delhi street market chaat stall and worn leather wallet"
+            core_char = "3D Pixar-style crisp ₹500 Indian currency note character"
             scenes_data = [
-                # Beat 1: Hook
+                # Scene 1 (Hook / Extreme Macro)
                 (
                     "Arre pehchana? Main hoon kadak paanch sau ka note! "
                     "ATM se nikalte waqt toh aise choomte ho... jaise main tumhari bichhdi hui mohabbat hoon!",
-                    f"Close-up of an {obj_desc} sliding proudly out of an ATM slot with golden rim lighting",
+                    f"Low-angle worm's-eye macro probe shot looking up at the {core_char} emerging from a glowing ATM slot, smug animated eyes gleaming under golden rim lighting, 9:16 vertical",
+                    beat_cameras[0],
                     ["crisp paper rustle", "cash cha-ching"]
                 ),
-                # Beat 2: Escalation
+                # Scene 2 (Escalation / Chaos Action)
                 (
                     "Par bhai sahab, meri izzat sirf tab tak hai jab tak mera chhutta na ho jaaye! "
                     "Ek baar golgappe waale ko diya nahi... ki sau-sau ke note bikharke hawa ho jaate hain?",
-                    f"The {obj_desc} clutching the inside of a leather wallet in terror as a hand reaches in near a {setting_desc}",
+                    f"Medium wide profile shot at a crowded Delhi street chaat stall: spicy water splashes as a hand snatches the {core_char} over bubbling frying pans and bustling street lights",
+                    beat_cameras[1],
                     ["suspenseful strings", "street market chatter"]
                 ),
-                # Beat 3: Boiling Point
+                # Scene 3 (Meltdown / POV Tension)
                 (
                     "Kabhi sabzi waale ki geeli jeb mein, kabhi mummy ke aate ke dabbe mein... "
                     "kasam se, meri zindagi ka toh kachoomar bana diya hai!",
-                    f"The {obj_desc} covered in flour dust inside a kitchen steel tin, coughing dramatically with wide Pixar eyes",
+                    f"Dutch-angle close-up: {core_char} crumpled and buried inside a dark kitchen flour tin, white atta clouds exploding around its coughing wide eyes",
+                    beat_cameras[2],
                     ["tin lid clang", "dramatic cough"]
                 ),
-                # Beat 4: Absurd Punchline
+                # Scene 4 (Climax / Absurd Payoff)
                 (
                     "Aur suno! Pant washing machine mein daalne se pehle jeb check kar liya karo... "
                     "paise dhone ka matlab Surf Excel mein ghumana nahi hota, samjhe!",
-                    f"The {obj_desc} spinning dizzyingly against a washing machine glass door covered in soap bubbles, glaring at camera",
+                    f"High-speed vertical tracking shot inside a spinning front-load washing machine drum: {core_char} plastered against the glass door in a vortex of flying soap foam and denim jeans",
+                    beat_cameras[3],
                     ["water slosh", "comedic trombone sting"]
                 ),
             ]
@@ -396,48 +414,51 @@ class ManualLLMProvider(BaseLLMProvider):
             }]
             obj_name = " ".join(clean_words[:3]).title() if clean_words else "Ghar Ka Samaan"
             title = f"{obj_name} KaBheja Fry!"[:60]
-            obj_desc = f"anthropomorphic 3D Pixar-style {obj_name} with expressive big eyes, animated eyebrows, and sarcastic personality"
-            setting_desc = "lively Indian household room with warm tungsten lighting"
+            core_char = f"3D Pixar-style sentient {obj_name}"
             scenes_data = [
-                # Beat 1: Hook
+                # Scene 1 (Hook / Extreme Macro)
                 (
                     f"Arre yaar... meri bhi sun lo! Main hoon tumhare ghar ka bechara {obj_name}! "
                     "Kasam se keh raha hoon, subah se raat tak meri jaan kha jaate hain yeh ghar waale!",
-                    f"Macro close-up of an {obj_desc} in a {setting_desc}, looking directly into the camera with sarcastic frustration",
+                    f"Low-angle worm's-eye macro probe shot peering up at the {core_char}'s twitching bloodshot eyes under dramatic rim lighting, 9:16 vertical",
+                    beat_cameras[0],
                     ["record scratch", "comedic pop"]
                 ),
-                # Beat 2: Escalation
+                # Scene 2 (Escalation / Chaos Action)
                 (
                     "Bhai sahab, na koi Sunday ki chhutti, na do minute ka aaram! "
                     "Thoda sa garam ho jaaun toh upar se do thappad maarke bolte hain... arre yeh phir atak gaya?",
-                    f"The {obj_desc} sweating and rattling from overwork in the {setting_desc} as a hand taps it impatiently",
+                    f"Medium wide profile shot in a crowded Indian household room: a hurried human hand slaps and cranks the {core_char} to maximum speed amidst morning chaos",
+                    beat_cameras[1],
                     ["metallic slap", "exhausted sigh"]
                 ),
-                # Beat 3: Boiling Point
+                # Scene 3 (Meltdown / POV Tension)
                 (
                     "Jab naya-naya dukan se laaye the tab toh malmal ke kapde se ponchhte the... "
                     "aur aaj dekho, mera poora anjar-panjar dheela kar diya hai!",
-                    f"Dramatic spotlight on the {obj_desc} shaking with comedic rage and puffing smoke in the {setting_desc}",
+                    f"Dutch-angle close-up: {core_char} body bulging and rattling violently, cherry-red overheating glow and thick white smoke jets blinding the lens",
+                    beat_cameras[2],
                     ["steam hiss", "tension riser"]
                 ),
-                # Beat 4: Absurd Punchline
+                # Scene 4 (Climax / Absurd Payoff)
                 (
                     "Abhi bhi waqt hai, thoda izzat se pesh aao... "
                     "warna kal subah aisa fuse udaunga na, ki poore mohalle ke mechanic bulaate phiroge!",
-                    f"The {obj_desc} crossing its arms with a savage smirk as a comic spark pops overhead in the {setting_desc}",
+                    f"High-speed vertical tracking shot looking straight up at the ceiling as a glowing part from the {core_char} rockets upward like a missile with comic sparks",
+                    beat_cameras[3],
                     ["electric pop", "savage bass drop"]
                 ),
             ]
 
         scenes: List[SceneScript] = []
-        for idx, (narr_text, vis_desc, sfx) in enumerate(scenes_data):
+        for idx, (narr_text, vis_desc, cam_move, sfx) in enumerate(scenes_data):
             dur = base_dur if idx < 3 else round(total_dur - (base_dur * 3), 1)
             scenes.append(
                 SceneScript(
                     index=idx,
                     narration=narr_text,
-                    visual_description=f"{vis_desc}, {recipe['visual_tokens']}, 9:16 vertical framing",
-                    camera_movement=f"{recipe['camera_tokens']}, expressive macro push-in",
+                    visual_description=vis_desc,
+                    camera_movement=cam_move,
                     sound_effects=sfx,
                     estimated_duration_seconds=dur
                 )
