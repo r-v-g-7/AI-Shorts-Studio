@@ -16,7 +16,7 @@ CHROME_CDP_LAUNCH_INSTRUCTIONS = (
     "To enable hands-free Google Flow automation, start Chrome with:\n"
     '  chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\\ChromeDebug"\n'
     "and sign in to https://flow.google.com (or https://labs.google/fx/tools/flow). "
-    "Job has been placed in VISUALS_PENDING so you can either launch Chrome on port 9222 and click Resume, "
+    "Job has been placed in AWAITING_CLIPS so you can either launch Chrome on port 9222 and click Resume, "
     "or drop clips into your Downloads folder for automatic intake."
 )
 

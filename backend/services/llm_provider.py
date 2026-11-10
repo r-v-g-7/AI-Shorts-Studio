@@ -122,7 +122,12 @@ MODE SELECTION & DIRECTIVES:
 - DYNAMIC SCENE VISUALS: Each scene's visual description MUST depict what is physically happening in the narrative action of that specific scene.
 - VISUAL STYLE SEPARATION: Visual Style tokens ({recipe['visual_tokens']}) and camera directives ({recipe['camera_tokens']}) dictate ONLY rendering engine, lighting, camera quality, and atmosphere. They MUST NEVER override story subjects (e.g. Deep Dive 3D means Unreal 5 nanite rendering and dramatic lighting—it does NOT mean turning an urban lion story into deep-sea fish or ocean creatures).
 
-2. EDUCATIONAL / DOCUMENTARY MODE (When input is a factual concept, scientific phenomenon, or documentary subject):
+2. SENTIENT OBJECTS COMEDY MODE ("Sentient Everyday Objects POV" — MANDATORY when input features an everyday household/Indian object like a pressure cooker, tea kettle, old phone battery, ₹500 note, chappal, ceiling fan, router, etc., or asks for a POV comedy monologue):
+- FIRST-PERSON DRAMATIC HINDI MONOLOGUE: Write a hilarious, high-retention first-person POV monologue in natural Roman Hinglish ("Arre bhai, main...", "Subah se shaam tak...") where the sentient object roasts its owner and dramatizes its daily struggle with sharp, punchy comedic beats.
+- EXPRESSIVE 3D ANTHROPOMORPHIC VISUALS: Every scene's "visual_description" MUST depict the sentient everyday object in Pixar-grade 3D with expressive eyes and mouth, dramatic macro kitchen/household lighting, steam/sparks/motion, and comedic physical reactions in 9:16 vertical framing.
+- PUNCHY STRUCTURE (4 SCENES): Scene 1 = Explosive relatable hook; Scene 2 = Daily torture/overwork escalation; Scene 3 = Peak dramatic meltdown/climax; Scene 4 =Savage witty punchline twist.
+
+3. EDUCATIONAL / DOCUMENTARY MODE (When input is a factual concept, scientific phenomenon, or documentary subject):
 - Create a high-retention educational hook, escalating revelations, and awe-inspiring conclusion.
 {HINGLISH_DIRECTIVE if is_hinglish(request.language) else ""}
 
@@ -201,6 +206,207 @@ class ManualLLMProvider(BaseLLMProvider):
     Guarantees 100% offline availability with 0 API dependencies and zero cost.
     Intelligently switches between Cinematic Story Mode and Educational Documentary Mode.
     """
+
+    def _is_sentient_object_comedy(self, topic: str) -> bool:
+        """Detects 'Sentient Everyday Objects POV' comedy topics."""
+        t_lower = topic.lower()
+        object_keywords = [
+            "pressure cooker", "cooker", "seeti", "tea kettle", "kettle", "chai", "patila",
+            "tapeli", "phone battery", "battery", "charger", "500 note", "₹500", "500 ka note",
+            "rupee note", "sentient", "object pov", "objects pov", "everyday object", "monologue",
+            "chappal", "ceiling fan", "pankha", "fridge", "refrigerator", "alarm clock", "router",
+            "wifi", "washing machine", "tawa", "kadhai", "belan", "remote"
+        ]
+        return any(kw in t_lower for kw in object_keywords)
+
+    def _generate_sentient_object_comedy(self, request: ScriptGenerationRequest, recipe: Dict[str, Any]) -> ShortsScript:
+        """
+        Generates a high-retention 'Sentient Everyday Objects POV' comedy script
+        delivering a humorous, dramatic Roman Hinglish monologue with sharp, punchy beats.
+        """
+        raw_topic = request.topic.strip()
+        t_lower = raw_topic.lower()
+        total_dur = request.target_duration
+        scene_count = 4
+        base_dur = round(total_dur / scene_count, 1)
+
+        if "cooker" in t_lower or "seeti" in t_lower:
+            title = "Pressure Cooker Ki Dard Bhari Kahani"
+            obj_desc = "anthropomorphic shiny aluminum Indian pressure cooker with expressive big 3D Pixar eyes, furrowed metallic eyebrows, and a trembling steam whistle hat"
+            setting_desc = "busy Indian kitchen gas stove with glowing blue flames and turmeric spice jars"
+            scenes_data = [
+                (
+                    "Arre bhai, main koi time-bomb nahi, tumhare ghar ka Pressure Cooker hoon! "
+                    "Subah se shaam tak daal-chaawal ubaal ke meri akal ki seeti baj chuki hai!",
+                    f"Close-up of an {obj_desc} sitting on a {setting_desc}, looking directly at camera with dramatic wide eyes and puffing steam",
+                    ["hissing steam buildup", "comedic timpani hit"]
+                ),
+                (
+                    "Mummy bolti hai teen seeti pe gas band kar dena! "
+                    "Aur tum reels dekhte rehte ho jab tak meri paanchvi seeti pe jaan na nikal jaaye!",
+                    f"The {obj_desc} shaking violently on high flame with red-hot cheeks, holding onto its lid in panic while steam erupts around a {setting_desc}",
+                    ["rapid metal rattling", "intense flame whoosh"]
+                ),
+                (
+                    "Kal toh hadh ho gayi! Rajma galane ke chakkar mein itna pressure banaya "
+                    "ki meri seeti seedha chhat se ja takrayi, aur daal poore kitchen mein!",
+                    f"Dramatic slow-motion explosion of steam as the {obj_desc} launches its whistle into the air like a rocket in the {setting_desc}",
+                    ["loud pressure cooker whistle blast", "cartoon ricochet"]
+                ),
+                (
+                    "Agli baar gas on karke phone chalaya na, "
+                    "toh seeti nahi bajegi beta... seedha tera band bajega!",
+                    f"The {obj_desc} covered in yellow dal splatters, crossing its metallic handles with a sassy smirk on the {setting_desc}",
+                    ["sassy bass drop", "final comic whistle"]
+                ),
+            ]
+        elif "kettle" in t_lower or "chai" in t_lower or "patila" in t_lower or "tapeli" in t_lower:
+            title = "Chai Ke Patile Ka Daily Struggle"
+            obj_desc = "anthropomorphic battered aluminum Indian tea saucepan (chai patila) with expressive 3D Pixar eyes, a dented rim mouth, and bubbling masala chai crown"
+            setting_desc = "warm sunlit Indian kitchen countertop with ginger grater and cardamom pods"
+            scenes_data = [
+                (
+                    "Main hoon is ghar ka sabse bada therapist — Chai ka Patila! "
+                    "Sir dard tumhe hota hai, aur aag pe har roz mujhe chadhaya jaata hai!",
+                    f"Macro close-up of an {obj_desc} on a gas burner in a {setting_desc}, rolling its eyes dramatically as milk pours onto its head",
+                    ["milk splash", "bubbling boil"]
+                ),
+                (
+                    "Adrak koot-koot ke mujhme phenkte ho, elaichi ka tadka lagate ho, "
+                    "aur ubaal aate hi gas kam karne ke bajaye gayab ho jaate ho!",
+                    f"The {obj_desc} coughing from ginger and tea leaves while foaming chai rises perilously to its brim in the {setting_desc}",
+                    ["mortar pestle thud", "rising foam sizzle"]
+                ),
+                (
+                    "Jaise hi tumhari nazar hategi, main kasam se ubal ke poore gas stove pe gir jaunga! "
+                    "Yeh mera roz ka badla hai!",
+                    f"The {obj_desc} grinning mischievously as bubbly brown masala chai overflows dramatically across the burner in the {setting_desc}",
+                    ["dramatic orchestral swell", "liquid overflow sizzle"]
+                ),
+                (
+                    "Chai peene ke baad mujhe sink mein sookhne mat chhodna... "
+                    "warna kal subahki chai mein namak milega, samjhe!",
+                    f"The {obj_desc} sitting in a kitchen sink with dried tea stains, glaring sassily at the camera with one eyebrow raised",
+                    ["metallic clink", "comedic punchline sting"]
+                ),
+            ]
+        elif "battery" in t_lower or "phone" in t_lower or "charger" in t_lower:
+            title = "1% Phone Battery Ki Aakhri Cheekh"
+            obj_desc = "anthropomorphic glowing 3D smartphone battery icon character with exhausted bloodshot Pixar eyes, bandages, and flickering red 1% meter"
+            setting_desc = "high-tech neon circuit board interior inside a smartphone"
+            scenes_data = [
+                (
+                    "Bhai reham kar! Main tere phone ki aakhri ek percent bachi hui Battery hoon! "
+                    "Meri saansein atak rahi hain aur tu abhi bhi reels scroll kar raha hai!",
+                    f"Close-up of an {obj_desc} panting heavily inside a {setting_desc}, holding up a trembling '1%' warning sign",
+                    ["low battery warning beep", "heartbeat thump"]
+                ),
+                (
+                    "Brightness full rakhi hai, background mein bees apps khule hain, "
+                    "aur charger bed ke paas pada hai par tujhse haath nahi badhaya jaata!",
+                    f"The {obj_desc} struggling to carry giant glowing social media app blocks on its back inside the {setting_desc}",
+                    ["electric spark", "exhausted groan"]
+                ),
+                (
+                    "Jab main pachaas percent thi tab toh bhaav nahi diya, "
+                    "ab laal nishaan dikhte hi bhaag raha hai socket dhoondhne!",
+                    f"Dramatic action shot of the {obj_desc} sprinting in slow-motion toward a glowing lightning charger port as lights flicker out",
+                    ["dramatic siren", "power-down hum"]
+                ),
+                (
+                    "Le beta, charger lagane se ek second pehle... main chali! "
+                    "Ab dekh kaale screen mein apni shakal!",
+                    f"The {obj_desc} winking mischievously and pulling a giant power switch down to black, followed by a sudden golden lightning recharge jolt",
+                    ["power switch click", "comedic bass drop"]
+                ),
+            ]
+        elif "500" in t_lower or "note" in t_lower or "rupee" in t_lower or "paisa" in t_lower:
+            title = "₹500 Ke Note Ki Ajeeb Zindagi"
+            obj_desc = "anthropomorphic crisp stone-grey ₹500 Indian currency note character with expressive 3D Pixar eyes, folding paper arms, and regal attitude"
+            setting_desc = "bustling Indian street market stall and leather wallet interior"
+            scenes_data = [
+                (
+                    "Main hoon kadak paanch sau ka note! ATM se nikalte hi "
+                    "tum mujhe aise chhoote ho jaise main tumhara bichhda hua pyaar hoon!",
+                    f"Close-up of an {obj_desc} stepping proudly out of a glowing ATM slot with sunglasses and cinematic golden rim light",
+                    ["crisp paper rustle", "cash register cha-ching"]
+                ),
+                (
+                    "Par meri izzat sirf tab tak hai jab tak main toot na jaaun! "
+                    "Ek baar chhutta ho gaya toh sau-sau ke note bikharke gayab ho jaate hain!",
+                    f"The {obj_desc} hiding nervously inside a dark leather wallet while a giant hand reaches in near a {setting_desc}",
+                    ["suspenseful strings", "leather creak"]
+                ),
+                (
+                    "Kabhi golgappe waale ke haath mein, kabhi mummy ki chhupi hui dibbi mein... "
+                    "meri zindagi kisi thriller movie se kam nahi!",
+                    f"Fast-paced montage of the {obj_desc} dodging spicy pani-puri splashes and getting tucked inside a kitchen spice tin",
+                    ["street market chatter", "lid slam"]
+                ),
+                (
+                    "Aur haan, washing machine mein dhulne se pehle jeb check kar liya karo... "
+                    "paise dhone ka matlab yeh nahi hota, bhai!",
+                    f"The {obj_desc} spinning dizzyingly inside a soapy washing machine drum with soap bubbles on its head, glaring at camera",
+                    ["water slosh", "funny trombone sting"]
+                ),
+            ]
+        else:
+            first_line = raw_topic.split("\n")[0].split(".")[0].strip()
+            obj_name = first_line[:35].strip() if len(first_line) > 3 else "Ghar Ka Samaan"
+            title = f"{obj_name} Ki Dil Ki Baat"[:60]
+            obj_desc = f"anthropomorphic 3D Pixar-style {obj_name} with expressive big eyes, animated mouth, and dramatic personality"
+            setting_desc = "vibrant Indian household room with warm cinematic lighting"
+            scenes_data = [
+                (
+                    f"Arre suno! Main hoon tumhare ghar ka bechara {obj_name}! "
+                    "Roz mujhe bina soche-samjhe istemaal karte ho, aaj meri bhi sun lo!",
+                    f"Macro close-up of an {obj_desc} in a {setting_desc}, looking directly into the lens with dramatic comedic frustration",
+                    ["record scratch", "comedic pop"]
+                ),
+                (
+                    "Subah se lekar raat tak meri bilkul chhutti nahi hoti! "
+                    "Thoda sa aaram maango toh bolte ho yeh kharab ho gaya hai!",
+                    f"The {obj_desc} sweating and working overtime in the {setting_desc} with exaggerated cartoon exhaustion",
+                    ["fast clock ticking", "cartoon sigh"]
+                ),
+                (
+                    "Jab naya aaya tha tab kitne pyaar se rakha tha, "
+                    "aur aaj dekho—dhool aur patakne ke siva kuch nahi milta!",
+                    f"Dramatic spotlight on the {obj_desc} wiping away a single dramatic tear in the {setting_desc}",
+                    ["dramatic violin note", "thud impact"]
+                ),
+                (
+                    "Thoda pyaar se rakhoge toh saalon chalunga beta, "
+                    "warna kal subah dhoka de dunga—phir bulaate rehna mechanic ko!",
+                    f"The {obj_desc} smirking confidently with crossed arms in the {setting_desc}",
+                    ["sassy bass drop", "wink chime"]
+                ),
+            ]
+
+        scenes: List[SceneScript] = []
+        for idx, (narr_text, vis_desc, sfx) in enumerate(scenes_data):
+            dur = base_dur if idx < 3 else round(total_dur - (base_dur * 3), 1)
+            scenes.append(
+                SceneScript(
+                    index=idx,
+                    narration=narr_text,
+                    visual_description=f"{vis_desc}, {recipe['visual_tokens']}, 9:16 vertical framing",
+                    camera_movement=f"{recipe['camera_tokens']}, expressive macro push-in",
+                    sound_effects=sfx,
+                    estimated_duration_seconds=dur
+                )
+            )
+
+        complete_narration = " ".join(s.narration for s in scenes)
+        return ShortsScript(
+            title=title[:60],
+            hook=scenes[0].narration,
+            complete_narration=complete_narration,
+            target_audience=request.target_audience,
+            visual_style=request.visual_style,
+            total_estimated_duration=total_dur,
+            scenes=scenes
+        )
 
     def _is_cinematic_story(self, topic: str) -> bool:
         """Determines whether the topic is a fictional narrative story."""
@@ -419,7 +625,11 @@ class ManualLLMProvider(BaseLLMProvider):
 
         recipe = STYLE_RECIPES.get(request.visual_style, STYLE_RECIPES[VisualStyle.CUSTOM])
 
-        # Distinguish between Cinematic Story Mode and Educational Documentary Mode
+        # 1. Sentient Everyday Objects POV Comedy Mode
+        if self._is_sentient_object_comedy(request.topic):
+            return self._generate_sentient_object_comedy(request, recipe)
+
+        # 2. Cinematic Story Mode vs Educational Documentary Mode
         if self._is_cinematic_story(request.topic):
             return self._generate_cinematic_story(request, recipe)
         else:

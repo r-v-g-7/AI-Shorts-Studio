@@ -180,6 +180,14 @@ class ScenePromptManager:
                 clothing="Immaculate bespoke white three-piece suit with gold buttons and silk pocket square",
                 distinctive_features="Golden lion fur, tailored white suit, luxury gold wristwatch"
             )
+        elif any(k in text_corpus for k in ["pressure cooker", "cooker", "chai", "patila", "kettle", "battery", "500", "paanch sau"]):
+            char_spec = CharacterReference(
+                name="Sentient Everyday Object Protagonist",
+                role="Comedic POV Narrator",
+                appearance="Expressive Pixar-style 3D anthropomorphized Indian household object with big animated eyes, expressive eyebrows, and tactile surface wear",
+                clothing="Authentic metallic, glass, or crisp currency texture with dramatic rim lighting",
+                distinctive_features="Animated expressive face, steam/spark reactions, and comedic body language"
+            )
         elif "mariana" in text_corpus or "abyssal" in text_corpus or "bioluminescent" in text_corpus:
             char_spec = CharacterReference(
                 name="Abyssal Bioluminescent Specimen",
@@ -206,6 +214,13 @@ class ScenePromptManager:
                 lighting_conditions="Midnight ambient glow with radiant moon illumination and neon architectural rim lighting",
                 atmosphere="Atmospheric city night mist under clearing storm clouds",
                 color_palette=["#0A192F", "#172A45", "#F5A623", "#F8F9FA"]
+            )
+        elif any(k in text_corpus for k in ["kitchen", "stove", "cooker", "chai", "patila", "wallet", "battery"]):
+            env_spec = EnvironmentReference(
+                setting_name="Vibrant Indian Household & Kitchen Countertop",
+                lighting_conditions="Warm cinematic tungsten kitchen lighting with dramatic blue gas-flame rim glow",
+                atmosphere="Lively household ambience with rising steam, spice jars, and shallow macro depth-of-field",
+                color_palette=["#1F2937", "#F59E0B", "#EF4444", "#FEF3C7"]
             )
         elif any(k in text_corpus for k in ["mariana", "trench", "abyss", "hadal", "deep sea"]):
             env_spec = EnvironmentReference(

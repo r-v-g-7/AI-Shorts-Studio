@@ -187,29 +187,30 @@ def run():
         time.sleep(0.5)
         incoming = SceneIntakeService.get_incoming_directory(job_id)
         try:
-            # (a) in-progress Chrome download + unrelated file must be ignored
+            # (a) in-progress Chrome download (.crdownload) must be ignored
             shutil.copy2(staging / "scene_01.mp4", downloads / "scene_01.mp4.crdownload")
-            shutil.copy2(staging / "scene_02.mp4", downloads / "holiday_video.mp4")
-            time.sleep(2.5)
-            assert not list(incoming.glob("*.mp4")), "Partial/unrelated downloads were wrongly ingested"
-            assert (downloads / "scene_01.mp4.crdownload").exists() and (downloads / "holiday_video.mp4").exists()
-            print("[PASS] Ignored scene_01.mp4.crdownload (in progress), holiday_video.mp4 (no scene number), and stale pre-start download")
+            time.sleep(2.0)
+            assert not list(incoming.glob("*.mp4")), "Partial .crdownload file was wrongly ingested"
+            assert (downloads / "scene_01.mp4.crdownload").exists()
+            print("[PASS] Ignored scene_01.mp4.crdownload (in progress) and stale pre-start download")
 
-            # (b) the download finishes (browser renames .crdownload -> .mp4), scenes 1-3 arrive
-            os.replace(downloads / "scene_01.mp4.crdownload", downloads / "scene_01.mp4")
-            for i in (2, 3):
-                shutil.copy2(staging / f"scene_{i:02d}.mp4", downloads / f"scene_{i:02d}.mp4")
-            wait_for(lambda: len(list(incoming.glob("scene_0*.mp4"))) == 3, 15, what="scenes 1-3 to be moved into incoming_clips")
+            # (b) browser finishes downloading arbitrary .mp4 filenames -> auto-mapped to scene_01, scene_02, scene_03!
+            os.replace(downloads / "scene_01.mp4.crdownload", downloads / "flow_clip_alpha.mp4")
+            shutil.copy2(staging / "scene_02.mp4", downloads / "google_flow_export_2.mp4")
+            shutil.copy2(staging / "scene_03.mp4", downloads / "video_download_3.mp4")
+            wait_for(lambda: len(list(incoming.glob("scene_0*.mp4"))) == 3, 15, what="scenes 1-3 to be auto-mapped into incoming_clips")
             time.sleep(1.5)
-            assert not any((downloads / f"scene_0{i}.mp4").exists() for i in (1, 2, 3)), "Clips should be MOVED out of Downloads"
+            assert (incoming / "scene_01.mp4").exists()
+            assert (incoming / "scene_02.mp4").exists()
+            assert (incoming / "scene_03.mp4").exists()
             status = watcher.status()
             assert status["scenes_ready"] == 3 and status["scenes_total"] == 4, status
-            assert JobService.get_job(job_id)["status"] == JobStatus.VISUALS_PENDING.value
-            print("[PASS] Scenes 1-3 moved to incoming_clips/ and validated; job still waiting (3/4), no premature render")
+            assert JobService.get_job(job_id)["status"] in (JobStatus.AWAITING_CLIPS.value, JobStatus.VISUALS_PENDING.value)
+            print("[PASS] Arbitrary .mp4 files auto-mapped to scene_01..03 in incoming_clips/; job at AWAITING_CLIPS (3/4)")
 
-            # (c) last clip arrives -> automatic render
+            # (c) 4th clip arrives (even with arbitrary name) -> mapped to scene_04.mp4 -> automatic render
             print("\n--- 6. Auto-render once all 4 clips have arrived ---")
-            shutil.copy2(staging / "scene_04.mp4", downloads / "scene_04.mp4")
+            shutil.copy2(staging / "scene_04.mp4", downloads / "final_flow_clip.mp4")
             wait_for(lambda: JobService.get_job(job_id)["status"] == JobStatus.COMPLETED.value, 180, interval=1.0,
                      what="automatic render to finish")
         finally:

@@ -208,6 +208,22 @@ class ProductionQueueManager:
                     self._history.append(job_to_run)
                     self._current_job = None
 
+    def resume_job(self, job_id: str, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Resumes a job from its current stage:
+        - Scans storage/jobs/<job_id>/incoming_clips/ for existing scene_*.mp4 files.
+        - Enqueues GENERATE_FULL_VIDEO so only missing scenes are generated, or jumps
+          straight to COMPOSITING if all 4 scene clips already exist.
+        """
+        with self._queue_lock:
+            self._history = [h for h in self._history if h.job_id != job_id]
+        JobRepository.add_log(job_id, "INFO", "QUEUE", "Resuming job pipeline (preserving existing clips in incoming_clips/)...")
+        return self.enqueue_job(job_id, action="GENERATE_FULL_VIDEO", options=options)
+
+    def process_job(self, item: QueueItem):
+        """Alias for _execute_queue_item."""
+        return self._execute_queue_item(item)
+
     def _execute_queue_item(self, item: QueueItem):
         job_id = item.job_id
         action = item.action
@@ -215,7 +231,7 @@ class ProductionQueueManager:
 
         logger.info(f"ProductionQueueWorker: Starting job '{job_id}' (action={action})")
 
-        # Action: GENERATE_FULL_VIDEO (1-Click Complete Pipeline)
+        # Action: GENERATE_FULL_VIDEO (1-Click Complete Pipeline & Auto-Resume)
         if action == "GENERATE_FULL_VIDEO":
             if item.status == "CANCELLED":
                 return
@@ -246,35 +262,60 @@ class ProductionQueueManager:
             if item.status == "CANCELLED":
                 return
 
-            item.current_stage = "GENERATING_FLOW_VISUALS (Scene 1/4)"
-            item.progress_percent = 55
-            provider_override = options.get("provider_override")
-
-            def _on_scene_progress(stage_label: str, scene_num: int, total_scenes: int):
-                item.current_stage = stage_label
-                item.progress_percent = 50 + int((scene_num / max(1, total_scenes)) * 30)
-
-            generated_clips = PipelineController.execute_video_generation_stage(
-                job_id,
-                provider_override=provider_override,
-                stage_callback=_on_scene_progress
+            # Scan incoming_clips/ for existing scene_*.mp4 files before starting visuals
+            from backend.services.scene_intake_service import SceneIntakeService
+            manifest = JobService.load_manifest(job_id)
+            total_scenes = len(manifest.scenes) if (manifest and manifest.scenes) else 4
+            existing_indices, missing_indices = SceneIntakeService.get_existing_and_missing_scenes(
+                job_id, total_scenes=total_scenes
             )
 
-            if item.status == "CANCELLED":
-                return
-
-            manifest = JobService.load_manifest(job_id)
-            if not manifest or len(generated_clips) < len(manifest.scenes):
-                item.current_stage = "VISUALS_PENDING"
-                item.progress_percent = 70
-                logger.info(
-                    f"ProductionQueueWorker: Job '{job_id}' placed in VISUALS_PENDING "
-                    "(awaiting Google Flow clips via CDP or Downloads watcher)."
+            if len(missing_indices) == 0:
+                # All 4 scenes already exist in incoming_clips/ -> jump straight to COMPOSITING
+                SceneIntakeService.scan_and_ingest(job_id)
+                item.current_stage = "COMPOSITING"
+                item.progress_percent = 80
+                JobService.update_job_status(job_id, JobStatus.COMPOSITING)
+                JobRepository.add_log(
+                    job_id,
+                    "INFO",
+                    "QUEUE",
+                    f"All {total_scenes} clips found in incoming_clips/; jumping straight to COMPOSITING."
                 )
-                return
+            else:
+                first_missing = missing_indices[0] + 1
+                item.current_stage = f"GENERATING_FLOW_VISUALS (Scene {first_missing}/{total_scenes})"
+                item.progress_percent = 50 + int((len(existing_indices) / max(1, total_scenes)) * 30)
+                provider_override = options.get("provider_override")
 
-            item.current_stage = "RENDERING"
+                def _on_scene_progress(stage_label: str, scene_num: int, total_cnt: int):
+                    item.current_stage = stage_label
+                    item.progress_percent = 50 + int((scene_num / max(1, total_cnt)) * 30)
+
+                generated_clips = PipelineController.execute_video_generation_stage(
+                    job_id,
+                    provider_override=provider_override,
+                    stage_callback=_on_scene_progress
+                )
+
+                if item.status == "CANCELLED":
+                    return
+
+                manifest = JobService.load_manifest(job_id)
+                if not manifest or len(generated_clips) < len(manifest.scenes):
+                    item.current_stage = "AWAITING_CLIPS"
+                    item.progress_percent = 70
+                    JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS)
+                    logger.info(
+                        f"ProductionQueueWorker: Job '{job_id}' paused at AWAITING_CLIPS "
+                        f"({len(generated_clips)}/{len(manifest.scenes) if manifest else 4} scenes ready). "
+                        "DownloadsWatcher remains active to auto-ingest remaining clips."
+                    )
+                    return
+
+            item.current_stage = "COMPOSITING"
             item.progress_percent = 85
+            JobService.update_job_status(job_id, JobStatus.COMPOSITING)
             bgm_path = options.get("bgm_path") or (str(settings.DEFAULT_BGM_PATH) if settings.DEFAULT_BGM_PATH.exists() else None)
             quality_mode_val = options.get("quality_mode", "BALANCED")
             from backend.schemas.preset_schema import QualityMode

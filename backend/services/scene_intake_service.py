@@ -136,6 +136,49 @@ class SceneIntakeService:
         return None
 
     @classmethod
+    def get_existing_and_missing_scenes(cls, job_id: str, total_scenes: int = 4) -> Tuple[List[int], List[int]]:
+        """
+        Scans storage/jobs/<job_id>/incoming_clips/ (and scenes/) for valid existing scene_0X.mp4 files.
+        Returns (existing_indices_0_based, missing_indices_0_based).
+        Also ensures valid clips in incoming_clips/ are synced to scenes/ and vice-versa.
+        """
+        manifest = JobService.load_manifest(job_id)
+        scene_count = len(manifest.scenes) if (manifest and manifest.scenes) else total_scenes
+
+        incoming_dir = cls.get_incoming_directory(job_id)
+        scenes_dir = cls.get_scenes_directory(job_id)
+
+        existing: List[int] = []
+        missing: List[int] = []
+
+        for idx in range(scene_count):
+            scene_num = idx + 1
+            inc_file = incoming_dir / f"scene_{scene_num:02d}.mp4"
+            scn_file = scenes_dir / f"scene_{scene_num:02d}.mp4"
+
+            valid_path: Optional[Path] = None
+            if inc_file.exists() and inc_file.stat().st_size > 1000:
+                probe = cls.probe_video(inc_file)
+                if probe["is_valid"]:
+                    valid_path = inc_file
+                    if not scn_file.exists() or inc_file.stat().st_mtime > scn_file.stat().st_mtime:
+                        shutil.copy2(str(inc_file), str(scn_file))
+
+            if valid_path is None and scn_file.exists() and scn_file.stat().st_size > 1000:
+                probe = cls.probe_video(scn_file)
+                if probe["is_valid"]:
+                    valid_path = scn_file
+                    if not inc_file.exists():
+                        shutil.copy2(str(scn_file), str(inc_file))
+
+            if valid_path is not None:
+                existing.append(idx)
+            else:
+                missing.append(idx)
+
+        return existing, missing
+
+    @classmethod
     def scan_and_ingest(cls, job_id: str) -> Dict[str, Any]:
         """
         Scans incoming_clips/ for the job, validates video integrity via FFprobe,
@@ -233,7 +276,11 @@ class SceneIntakeService:
         all_ready = len(missing_scenes) == 0
 
         # Update job status if all scenes are ready
-        if all_ready and manifest.status == JobStatus.VISUALS_PENDING:
+        if all_ready and manifest.status in (
+            JobStatus.VISUALS_PENDING,
+            JobStatus.AWAITING_CLIPS,
+            JobStatus.AWAITING_SCENES,
+        ):
             JobService.update_job_status(job_id, JobStatus.SCENES_VALIDATED)
             JobRepository.add_log(
                 job_id,

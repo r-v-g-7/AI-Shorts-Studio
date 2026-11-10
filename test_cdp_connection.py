@@ -99,15 +99,18 @@ async def test_live_cdp_and_dom():
             assert "--remote-debugging-port=9222" in str(e)
             print(f"[PASS] Clean diagnostic raised: {e}")
 
-    print("\n[3] Testing Pipeline Safe Fallback to VISUALS_PENDING when CDP is unreachable...")
+    print("\n[3] Testing Pipeline Safe Fallback to AWAITING_CLIPS when CDP is unreachable...")
     init_db()
     job = PipelineController.create_new_job(
-        topic="Ek chhota sa sher chaand ko pakadne ke liye oonche pahad par chadh gaya.",
-        title="CDP Fallback Verification Short",
+        topic="Pressure cooker POV comedy monologue in an Indian kitchen",
+        title="Sentient Pressure Cooker Comedy",
         visual_style=VisualStyle.TALL_TALE_3D,
     )
     job_id = job["id"]
-    PipelineController.execute_script_stage(job_id)
+    script = PipelineController.execute_script_stage(job_id)
+    print(f"[PASS] Sentient Objects Comedy Script Generated: '{script.title}'")
+    print(f"       Hook: {script.hook}")
+    assert "Pressure Cooker" in script.complete_narration or "seeti" in script.complete_narration.lower()
 
     orig_cdp = settings.CDP_DEBUGGING_URL
     try:
@@ -118,16 +121,43 @@ async def test_live_cdp_and_dom():
         )
         assert clips == [], f"Expected empty clip list on fallback, got {clips}"
         updated_job = JobService.get_job(job_id)
-        assert updated_job["status"] == JobStatus.VISUALS_PENDING.value, (
-            f"Expected job status VISUALS_PENDING, got {updated_job['status']}"
+        assert updated_job["status"] == JobStatus.AWAITING_CLIPS.value, (
+            f"Expected job status AWAITING_CLIPS, got {updated_job['status']}"
         )
         logs = JobRepository.get_logs(job_id)
         assert any("--remote-debugging-port=9222" in (lg.get("message") or "") for lg in logs), (
             "Expected --remote-debugging-port=9222 launch instructions in job logs"
         )
-        print(f"[PASS] Unreachable CDP safely placed job '{job_id[:8]}' into VISUALS_PENDING with launch instructions logged!")
+        print(f"[PASS] Unreachable CDP safely placed job '{job_id[:8]}' into AWAITING_CLIPS with launch instructions logged!")
     finally:
         settings.CDP_DEBUGGING_URL = orig_cdp
+
+    print("\n[4] Testing Auto-Resume Scene Skipping & Direct Jump to COMPOSITING...")
+    from backend.services.scene_intake_service import SceneIntakeService
+    from backend.services.video_generator import MockVideoGenerator
+
+    incoming_dir = SceneIntakeService.get_incoming_directory(job_id)
+    mock_gen = MockVideoGenerator()
+    # Pre-populate scene_01.mp4 and scene_02.mp4 in incoming_clips/
+    mock_gen.generate_scene_clip("scene 1", 3.0, incoming_dir / "scene_01.mp4", scene_index=0)
+    mock_gen.generate_scene_clip("scene 2", 3.0, incoming_dir / "scene_02.mp4", scene_index=1)
+
+    existing, missing = SceneIntakeService.get_existing_and_missing_scenes(job_id, total_scenes=4)
+    assert existing == [0, 1] and missing == [2, 3], f"Expected existing=[0,1], missing=[2,3], got {existing}, {missing}"
+    print(f"[PASS] Detected existing scenes {existing} in incoming_clips/ and missing scenes {missing}.")
+
+    # Run video generation stage with mock provider -> should skip 1 & 2 and generate only 3 & 4
+    clips = PipelineController.execute_video_generation_stage(job_id=job_id, provider_override="mock")
+    assert len(clips) == 4
+    logs = JobRepository.get_logs(job_id)
+    assert any("skipping existing [scene_01.mp4, scene_02.mp4]" in (lg.get("message") or "") for lg in logs)
+    print("[PASS] Auto-Resume skipped existing scenes [1, 2] and generated only missing scenes [3, 4]!")
+
+    # Re-running when all 4 exist in incoming_clips/ must jump straight to COMPOSITING
+    clips_again = PipelineController.execute_video_generation_stage(job_id=job_id, provider_override="flow_browser")
+    assert len(clips_again) == 4
+    assert JobService.get_job(job_id)["status"] == JobStatus.COMPOSITING.value
+    print("[PASS] When all 4 scenes exist in incoming_clips/, pipeline jumps straight to COMPOSITING!")
 
     print("\n" + "=" * 80)
     print("ALL CDP CONNECTION & FLOW DOM INTERACTION CHECKS PASSED (100% SUCCESS)!")

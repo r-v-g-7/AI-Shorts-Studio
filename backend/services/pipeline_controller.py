@@ -1,4 +1,5 @@
 import json
+import shutil
 import logging
 import traceback
 from pathlib import Path
@@ -327,14 +328,14 @@ class PipelineController:
         job_id: str,
         force_regenerate: bool = False,
         provider_override: Optional[str] = None,
-        stage_callback: Optional[ Any] = None
+        stage_callback: Optional[Any] = None
     ) -> List[str]:
         """
-        Stage 3.5: Automatically generates visual video clips for each scene
-        using the configured video generation provider (Flow Browser CDP, Gemini / Veo, or Mock).
-        Saves each generated clip directly to storage/jobs/{job_id}/scenes/scene_{index:02d}.mp4.
-        If flow_browser is selected and Chrome CDP on port 9222 is unreachable, logs instructions
-        and places the job cleanly in VISUALS_PENDING.
+        Stage 3.5: Automatically generates visual video clips ONLY for missing scenes
+        after scanning storage/jobs/{job_id}/incoming_clips/ for existing scene_*.mp4 files.
+        If all 4 scenes already exist, jumps straight to COMPOSITING.
+        If Flow CDP fails or times out, gracefully pauses at AWAITING_CLIPS (never FAILED)
+        so DownloadsWatcher can auto-ingest remaining clips and trigger rendering.
         """
         job = JobService.get_job(job_id)
         if not job:
@@ -350,6 +351,46 @@ class PipelineController:
         incoming_dir = job_dir / "incoming_clips"
         incoming_dir.mkdir(parents=True, exist_ok=True)
 
+        total_scenes = len(manifest.scenes)
+
+        # 1. Scan incoming_clips/ and scenes/ for existing scene_*.mp4 files first
+        if not force_regenerate:
+            SceneIntakeService.scan_and_ingest(job_id)
+            existing_indices, missing_indices = SceneIntakeService.get_existing_and_missing_scenes(
+                job_id, total_scenes=total_scenes
+            )
+            manifest = JobService.load_manifest(job_id)
+        else:
+            existing_indices = []
+            missing_indices = [s.index for s in manifest.scenes]
+
+        # If all scenes already exist on disk, jump straight to COMPOSITING
+        if len(missing_indices) == 0:
+            all_clips = [str(scenes_dir / f"scene_{i + 1:02d}.mp4") for i in range(total_scenes)]
+            for idx, scene in enumerate(manifest.scenes):
+                scene.clip_file = all_clips[idx]
+                scene.is_validated = True
+            JobService.save_manifest(manifest)
+            JobService.set_scenes(job_id, manifest.scenes)
+            JobService.update_job_status(job_id, JobStatus.COMPOSITING)
+            JobRepository.add_log(
+                job_id,
+                "INFO",
+                "VIDEO_GENERATOR",
+                f"All {total_scenes} scene clips already exist in incoming_clips/; jumping straight to COMPOSITING."
+            )
+            return all_clips
+
+        if existing_indices:
+            skip_str = ", ".join(f"scene_{i + 1:02d}.mp4" for i in existing_indices)
+            miss_str = ", ".join(f"scene_{i + 1:02d}.mp4" for i in missing_indices)
+            JobRepository.add_log(
+                job_id,
+                "INFO",
+                "VIDEO_GENERATOR",
+                f"Resuming visuals: skipping existing [{skip_str}]; generating only missing [{miss_str}]."
+            )
+
         from backend.services.video_generator import get_video_generator, FlowBrowserVideoGenerator
         from backend.services.flow_automation_service import (
             FlowAutomationService,
@@ -358,37 +399,35 @@ class PipelineController:
         )
 
         generator = get_video_generator(provider_override=provider_override)
-        total_scenes = len(manifest.scenes)
 
         if isinstance(generator, FlowBrowserVideoGenerator):
             if not FlowAutomationService.is_cdp_reachable():
                 warn_msg = CHROME_CDP_LAUNCH_INSTRUCTIONS.format(cdp_url=settings.CDP_DEBUGGING_URL)
                 logger.warning(warn_msg)
                 JobRepository.add_log(job_id, "WARN", "FLOW_AUTOMATION", warn_msg)
-                JobService.update_job_status(job_id, JobStatus.VISUALS_PENDING)
-                return []
+                JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS)
+                return [str(scenes_dir / f"scene_{i + 1:02d}.mp4") for i in existing_indices]
 
         JobRepository.add_log(
             job_id,
             "INFO",
             "VIDEO_GENERATOR",
-            f"Starting automated video generation for {total_scenes} scenes using {generator.__class__.__name__}..."
+            f"Starting automated video generation for {len(missing_indices)} missing scene(s) using {generator.__class__.__name__}..."
         )
 
         generated_clips: List[str] = []
         for scene in manifest.scenes:
             scene_num = scene.index + 1
             clip_path = scenes_dir / f"scene_{scene_num:02d}.mp4"
+            incoming_clip_path = incoming_dir / f"scene_{scene_num:02d}.mp4"
 
-            # Resumption check: reuse valid existing clip if not force_regenerate
-            if clip_path.exists() and clip_path.stat().st_size > 1000 and not force_regenerate:
-                probe = SceneIntakeService.probe_video(clip_path)
-                if probe["is_valid"]:
-                    logger.info(f"Reusing existing clip for scene {scene_num}: {clip_path.name}")
-                    scene.clip_file = str(clip_path)
-                    scene.is_validated = True
-                    generated_clips.append(str(clip_path))
-                    continue
+            # Skip scenes that already exist in incoming_clips/ or scenes/
+            if scene.index in existing_indices and not force_regenerate:
+                logger.info(f"Skipping existing clip for Scene {scene_num}: {clip_path.name}")
+                scene.clip_file = str(clip_path)
+                scene.is_validated = True
+                generated_clips.append(str(clip_path))
+                continue
 
             stage_label = (
                 f"GENERATING_FLOW_VISUALS (Scene {scene_num}/{total_scenes})"
@@ -416,17 +455,22 @@ class PipelineController:
             except CDPConnectionError as cdp_err:
                 logger.warning(f"CDP connection failed during scene {scene_num}: {cdp_err}")
                 JobRepository.add_log(job_id, "WARN", "FLOW_AUTOMATION", str(cdp_err))
-                JobService.update_job_status(job_id, JobStatus.VISUALS_PENDING)
+                JobService.save_manifest(manifest)
+                JobService.set_scenes(job_id, manifest.scenes)
+                JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS)
                 return generated_clips
             except Exception as gen_err:
                 if isinstance(generator, FlowBrowserVideoGenerator):
                     warn_msg = (
-                        f"Google Flow browser automation encountered an issue on Scene {scene_num}: {gen_err}. "
-                        "Job placed in VISUALS_PENDING so manual downloads into your Downloads folder are auto-ingested."
+                        f"Google Flow automation paused on Scene {scene_num}: {gen_err}. "
+                        "Job placed in AWAITING_CLIPS — DownloadsWatcher is active and will automatically "
+                        f"map the next downloaded .mp4 to scene_{scene_num:02d}.mp4 and finish rendering."
                     )
                     logger.warning(warn_msg)
                     JobRepository.add_log(job_id, "WARN", "FLOW_AUTOMATION", warn_msg)
-                    JobService.update_job_status(job_id, JobStatus.VISUALS_PENDING)
+                    JobService.save_manifest(manifest)
+                    JobService.set_scenes(job_id, manifest.scenes)
+                    JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS)
                     return generated_clips
                 raise
 
@@ -435,6 +479,10 @@ class PipelineController:
             if not probe["is_valid"]:
                 raise RuntimeError(f"Generated clip for scene {scene_num} failed FFprobe validation: {probe.get('error')}")
 
+            # Keep incoming_clips/ synchronized with scenes/ so resume always sees all existing clips
+            if not incoming_clip_path.exists() or clip_path.stat().st_mtime > incoming_clip_path.stat().st_mtime:
+                shutil.copy2(str(clip_path), str(incoming_clip_path))
+
             scene.clip_file = str(clip_path)
             scene.is_validated = True
             generated_clips.append(str(clip_path))
@@ -442,8 +490,8 @@ class PipelineController:
         # Save updated scenes to manifest & DB
         JobService.save_manifest(manifest)
         JobService.set_scenes(job_id, manifest.scenes)
-        JobService.update_job_status(job_id, JobStatus.SCENES_VALIDATED)
-        JobRepository.add_log(job_id, "INFO", "VIDEO_GENERATOR", f"All {len(generated_clips)} scene clips generated and validated.")
+        JobService.update_job_status(job_id, JobStatus.COMPOSITING)
+        JobRepository.add_log(job_id, "INFO", "VIDEO_GENERATOR", f"All {len(generated_clips)} scene clips ready. Advancing to COMPOSITING.")
         return generated_clips
 
     @classmethod
@@ -458,33 +506,36 @@ class PipelineController:
         provider_override: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Complete 1-Click End-to-End Automated Pipeline:
-        Script -> Voice -> Subtitles -> AI Video Generation -> FFmpeg Conforming -> Quality Control.
+        Complete 1-Click End-to-End Automated Pipeline (and Auto-Resume):
+        Script -> Voice -> Subtitles -> Missing Scene Visuals -> FFmpeg Compositing -> Quality Control.
         """
         logger.info(f"Initiating 1-Click Automated Pipeline for job '{job_id}'")
 
-        # Step 1: Script
+        # Step 1: Script (reuses existing script.json if present)
         cls.execute_script_stage(job_id, generation_request=script_request)
 
-        # Step 2: Audio
+        # Step 2: Audio (reuses existing narration.wav & words.json if present)
         cls.execute_audio_stage(job_id, voice=voice, speed=speed)
 
-        # Step 3: Subtitles
+        # Step 3: Subtitles (reuses existing captions.ass if present)
         cls.execute_subtitles_stage(job_id)
 
-        # Step 4: Automated Video Generation
+        # Step 4: Automated Video Generation (skips existing scenes in incoming_clips/; jumps to COMPOSITING if all 4 exist)
         generated_clips = cls.execute_video_generation_stage(job_id, provider_override=provider_override)
         manifest = JobService.load_manifest(job_id)
         if not manifest or len(generated_clips) < len(manifest.scenes):
-            JobService.update_job_status(job_id, JobStatus.VISUALS_PENDING)
+            JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS)
             return {
-                "status": "visuals_pending",
+                "status": "awaiting_clips",
                 "job_id": job_id,
-                "current_status": JobStatus.VISUALS_PENDING.value,
-                "message": "Job is in VISUALS_PENDING awaiting Google Flow clips (via CDP port 9222 or Downloads folder)."
+                "current_status": JobStatus.AWAITING_CLIPS.value,
+                "clips_ready": len(generated_clips),
+                "clips_total": len(manifest.scenes) if manifest else 4,
+                "message": "Job is in AWAITING_CLIPS; DownloadsWatcher will auto-map incoming .mp4 files and finish rendering."
             }
 
-        # Step 5: Render with BGM & EBU R128 Loudness Normalization
+        # Step 5: Compositing & Render with BGM & EBU R128 Loudness Normalization
+        JobService.update_job_status(job_id, JobStatus.COMPOSITING)
         from backend.schemas.preset_schema import QualityMode
         q_mode = quality_mode if isinstance(quality_mode, QualityMode) else QualityMode.BALANCED
         active_bgm = bgm_path
@@ -495,6 +546,24 @@ class PipelineController:
             job_id=job_id,
             bgm_path=active_bgm,
             quality_mode=q_mode
+        )
+
+    @classmethod
+    def resume_job(
+        cls,
+        job_id: str,
+        quality_mode: Optional[Any] = None,
+        provider_override: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Resumes a job from its current state:
+        - Scans incoming_clips/ for existing scene_*.mp4 files.
+        - Generates only missing scenes (or jumps straight to COMPOSITING if all 4 exist).
+        """
+        return cls.run_full_automated_pipeline(
+            job_id=job_id,
+            quality_mode=quality_mode,
+            provider_override=provider_override
         )
 
     @classmethod

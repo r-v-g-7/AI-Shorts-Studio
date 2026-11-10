@@ -20,7 +20,11 @@ WATCHED_EXTENSIONS = {".mp4", ".mov"}
 # Browsers append these while a download is still in progress.
 PARTIAL_SUFFIXES = {".crdownload", ".part", ".partial", ".tmp", ".download", ".opdownload"}
 # Job states in which the studio is waiting for visual clips to arrive.
-AWAITING_CLIPS_STATUSES = (JobStatus.VISUALS_PENDING.value, "AWAITING_SCENES")
+AWAITING_CLIPS_STATUSES = (
+    JobStatus.AWAITING_CLIPS.value,
+    JobStatus.VISUALS_PENDING.value,
+    "AWAITING_SCENES",
+)
 # Jobs untouched for longer than this are never chosen as the clip target (guards against stale projects).
 ACTIVE_JOB_WINDOW_HOURS = 24
 
@@ -29,14 +33,10 @@ class DownloadsWatcher:
     """
     Non-blocking background watcher for the user's Downloads folder.
 
-    Finished video downloads named like scene_01.mp4 / scene_02.mov are moved into
-    storage/jobs/<active_job_id>/incoming_clips/, handed to SceneIntakeService, and once every
-    scene of the job has a valid clip the job is queued for the FFmpeg render + QC stage.
-
-    Safety rules:
-      * only files that appear AFTER the watcher started are considered (a start-up snapshot of the folder is ignored);
-      * a file must have an unchanged size for DOWNLOADS_STABLE_SECONDS (finished, not still being written);
-      * names must match the strict scene_NN / clip_NN / NN pattern - nothing is ever guessed.
+    Finished video downloads (.mp4 / .mov) are automatically mapped to the next missing scene
+    (scene_01.mp4 -> scene_02.mp4 -> scene_03.mp4 -> scene_04.mp4) based on disk existence in
+    storage/jobs/<active_job_id>/incoming_clips/, handed to SceneIntakeService, and once all 4
+    scenes have valid clips, video stitching and ASS subtitle burning are triggered immediately.
     """
 
     _instance: Optional["DownloadsWatcher"] = None
@@ -215,14 +215,29 @@ class DownloadsWatcher:
             if scene_count == 0:
                 continue
 
-            scene_idx = SceneIntakeService.match_filename_to_scene_index(path.name, scene_count)
-            if scene_idx is None:
+            # Inspect existing clips in incoming_clips/ to find missing scene indices (0..scene_count-1)
+            existing_indices, missing_indices = SceneIntakeService.get_existing_and_missing_scenes(
+                job_id, total_scenes=scene_count
+            )
+
+            # Check if filename explicitly specifies a scene index (e.g. scene_02.mp4);
+            # otherwise automatically map ANY downloaded .mp4/.mov to the lowest missing scene index!
+            explicit_idx = SceneIntakeService.match_filename_to_scene_index(path.name, scene_count)
+            if explicit_idx is not None:
+                scene_idx = explicit_idx
+            elif missing_indices:
+                scene_idx = missing_indices[0]
+            else:
                 self._ignored.add(signature)
-                self._record("INFO", f"Ignored '{path.name}': name does not match scene_01 ... scene_{scene_count:02d}.", None)
+                self._record(
+                    "INFO",
+                    f"Ignored '{path.name}': all {scene_count} scenes already exist in incoming_clips/.",
+                    job_id,
+                )
                 continue
 
             incoming_dir = SceneIntakeService.get_incoming_directory(job_id)
-            target = incoming_dir / f"scene_{scene_idx + 1:02d}{path.suffix.lower()}"
+            target = incoming_dir / f"scene_{scene_idx + 1:02d}.mp4"
             try:
                 self._archive_existing(incoming_dir, scene_idx, keep=target)
                 if target.exists():
@@ -238,16 +253,18 @@ class DownloadsWatcher:
             self._observed.pop(str(path), None)
             ingest = SceneIntakeService.scan_and_ingest(job_id)
             ready = ingest["assigned_scenes_count"]
+            if not ingest["all_scenes_ready"]:
+                JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS)
             self._record(
                 "INFO",
-                f"Moved '{path.name}' -> incoming_clips/{target.name} (scene {scene_idx + 1}). "
+                f"Auto-mapped '{path.name}' -> incoming_clips/{target.name} (Scene {scene_idx + 1}/{scene_count}). "
                 f"{ready}/{ingest['total_scenes']} scenes ready.",
                 job_id,
                 scene=scene_idx + 1,
             )
             results.append(ingest)
 
-            if ingest["all_scenes_ready"]:
+            if ingest["all_scenes_ready"] or ready >= scene_count:
                 self._maybe_auto_render(job_id)
 
         return results

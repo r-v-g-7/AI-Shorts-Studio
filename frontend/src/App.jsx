@@ -56,7 +56,7 @@ function App() {
 
       // Only fetch reference sheet if job has progressed past DRAFT
       // and avoid re-fetching on every 3s polling tick if already loaded
-      const postDraftStatuses = ["SCRIPT_READY", "AUDIO_PROCESSING", "AUDIO_READY", "VISUALS_PENDING", "RENDERING", "COMPLETED"];
+      const postDraftStatuses = ["SCRIPT_READY", "AUDIO_PROCESSING", "AUDIO_READY", "VISUALS_PENDING", "AWAITING_CLIPS", "COMPOSITING", "RENDERING", "COMPLETED"];
       if (postDraftStatuses.includes(jobData?.status)) {
         if (loadedReferenceJobIdRef.current !== jobId) {
           try {
@@ -250,11 +250,13 @@ function App() {
   const getStatusColor = (status) => {
     switch (status) {
       case "COMPLETED": return "bg-green-500/20 text-green-400 border-green-500/30";
+      case "COMPOSITING":
       case "RENDERING":
       case "AUDIO_PROCESSING":
       case "SCRIPT_GENERATING":
       case "VIDEO_GENERATING": return "bg-blue-500/20 text-blue-400 border-blue-500/30 animate-pulse";
       case "SCENES_VALIDATED": return "bg-indigo-500/20 text-indigo-400 border-indigo-500/30";
+      case "AWAITING_CLIPS":
       case "VISUALS_PENDING":
       case "AWAITING_SCENES": return "bg-amber-500/20 text-amber-400 border-amber-500/30";
       case "FAILED": return "bg-red-500/20 text-red-400 border-red-500/30";
