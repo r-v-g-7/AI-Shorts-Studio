@@ -57,7 +57,7 @@ class FlowAutomationService:
     ):
         self.cdp_url = (cdp_url or settings.CDP_DEBUGGING_URL or "http://127.0.0.1:9222").rstrip("/")
         self.flow_url = flow_url or getattr(settings, "FLOW_URL", self.DEFAULT_FLOW_URL) or self.DEFAULT_FLOW_URL
-        self.scene_timeout_seconds = scene_timeout_seconds or getattr(settings, "FLOW_SCENE_TIMEOUT_SECONDS", 240)
+        self.scene_timeout_seconds = scene_timeout_seconds or getattr(settings, "FLOW_SCENE_TIMEOUT_SECONDS", 180)
         self.downloads_dir = Path(downloads_dir or settings.DOWNLOADS_DIR)
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
 
@@ -401,6 +401,65 @@ class FlowAutomationService:
             pass
         return None
 
+    async def _find_inspector_download_button(self, page):
+        """
+        Locates the completed video download button in Google Flow's right-hand detail panel
+        using the required selector hierarchy:
+        1. page.locator('button:has(svg path[d*="M19 9h-4V3H9v6H5l7 7 7-7z"]), button[aria-label*="Download" i]').first
+        2. page.locator('div:has-text("Omni 1.2")').locator('..').locator('button').first
+        3. Any visible button near the top right containing the download tray icon (SVG or mat-icon).
+        """
+        hierarchy = [
+            page.locator('button:has(svg path[d*="M19 9h-4V3H9v6H5l7 7 7-7z"]), button[aria-label*="Download" i]').first,
+            page.locator('div:has-text("Omni 1.2")').locator('..').locator('button').first,
+            page.locator('button:has(mat-icon:has-text("download")), button:has-text("download")').first,
+            page.locator('a[aria-label*="Download" i], a[download]').first,
+        ]
+
+        for loc in hierarchy:
+            try:
+                if await loc.count() > 0 and await loc.is_visible() and await loc.is_enabled():
+                    return loc
+            except Exception:
+                continue
+
+        # Fallback 3: Any visible button near the top-right inspector panel containing a download tray icon
+        try:
+            top_right_btn_handle = await page.evaluate_handle(
+                """() => {
+                const vw = window.innerWidth || 1440;
+                const buttons = Array.from(document.querySelectorAll('button, a[role="button"]'));
+                for (const b of buttons) {
+                    const r = b.getBoundingClientRect();
+                    if (r.width <= 0 || r.height <= 0) continue;
+                    // Right-hand inspector panel action row (above prompt details, below main header)
+                    if (r.left >= vw * 0.50 && r.top >= 45 && r.top <= 420) {
+                        const txt = (b.innerText || '').trim().toLowerCase();
+                        const aria = (b.getAttribute('aria-label') || b.getAttribute('title') || '').toLowerCase();
+                        const paths = Array.from(b.querySelectorAll('svg path')).map(p => p.getAttribute('d') || '').join(' ');
+                        if (
+                            aria.includes('download') ||
+                            txt === 'download' ||
+                            txt.includes('file_download') ||
+                            paths.includes('M19 9h-4V3H9v6H5l7 7 7-7z') ||
+                            paths.includes('M19 9') ||
+                            paths.includes('M5 20h14')
+                        ) {
+                            return b;
+                        }
+                    }
+                }
+                return null;
+            }"""
+            )
+            elem = top_right_btn_handle.as_element()
+            if elem is not None:
+                return elem
+        except Exception as e:
+            logger.debug(f"[FlowCDP] Top-right download tray scan note: {e}")
+
+        return None
+
     async def generate_and_download_scene(
         self,
         prompt: str,
@@ -415,7 +474,8 @@ class FlowAutomationService:
            Control+A + Backspace, and types the visual prompt via keyboard.type(delay=15).
         3. Checks aspect ratio safely (never clicking top toolbar icons).
         4. Submits the prompt via the bottom-bar right-arrow button or Enter.
-        5. Polls for video generation completion and triggers download of scene_0X.mp4.
+        5. Waits up to 180s for video generation completion and clicks the right-hand
+           detail panel download button as soon as generation finishes.
         """
         if self._page is None:
             await self.connect_to_browser()
@@ -454,15 +514,16 @@ class FlowAutomationService:
         await self._submit_prompt(page)
         logger.info(
             f"[FlowCDP] Scene {scene_num} prompt submitted. "
-            f"Waiting up to {self.scene_timeout_seconds}s for video tile & download..."
+            f"Waiting up to {self.scene_timeout_seconds}s for Flow generation & inspector download button..."
         )
 
-        # Requirement 5: Download trigger & polling
+        # Requirement 5: Download trigger & polling (up to 180s)
         start_ts = time.time()
         downloaded_path: Optional[Path] = None
+        clicked_video_to_open_inspector = False
 
         while time.time() - start_ts < self.scene_timeout_seconds:
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(2500)
 
             # A. Check if a file already landed in Downloads directory
             new_dl = self._find_new_download_in_dir(downloads_baseline, submit_timestamp)
@@ -473,7 +534,7 @@ class FlowAutomationService:
                 logger.info(f"[FlowCDP] Detected downloaded file in Downloads folder -> {target_download_file}")
                 break
 
-            # B. Check if a new <video> tile has appeared on the canvas
+            # B. Check if generation has completed (new <video> ready or inspector download button active)
             curr_video_count = await page.locator("video").count()
             curr_video_srcs = await page.evaluate(
                 """() => Array.from(document.querySelectorAll('video'))
@@ -481,38 +542,46 @@ class FlowAutomationService:
                     .filter(Boolean)"""
             )
             new_srcs = [s for s in curr_video_srcs if s not in prev_video_srcs]
+            video_finished = curr_video_count > prev_video_count or len(new_srcs) > 0
 
-            if curr_video_count > prev_video_count or new_srcs:
-                # Hover over the newest video tile to reveal its action buttons (Download / More)
+            # Also check if the inspector download button appeared directly after submission
+            dl_btn = await self._find_inspector_download_button(page) if (video_finished or (time.time() - start_ts > 8)) else None
+
+            if video_finished and dl_btn is None and not clicked_video_to_open_inspector:
+                # Click the completed video tile once to open the right-hand detail inspector panel
                 try:
                     newest_video = page.locator("video").first
                     if await newest_video.is_visible():
-                        await newest_video.hover(timeout=2000)
-                        await page.wait_for_timeout(400)
+                        await newest_video.click(timeout=2000)
+                        clicked_video_to_open_inspector = True
+                        await page.wait_for_timeout(600)
+                        dl_btn = await self._find_inspector_download_button(page)
                 except Exception:
                     pass
 
-                # Try clicking a visible Download button/option on the tile
-                for sel in self.DOWNLOAD_BUTTON_SELECTORS:
-                    loc = page.locator(sel)
-                    if await loc.count() > 0:
-                        btn = loc.first
-                        try:
-                            if await btn.is_visible():
-                                async with page.expect_download(timeout=25000) as download_info:
-                                    await btn.click(timeout=4000)
-                                download = await download_info.value
-                                await download.save_as(str(target_download_file))
-                                downloaded_path = target_download_file
-                                logger.info(f"[FlowCDP] Downloaded Scene {scene_num} via tile button -> {target_download_file}")
-                                break
-                        except Exception as dl_err:
-                            logger.debug(f"[FlowCDP] Tile download click note: {dl_err}")
-
-                if downloaded_path and downloaded_path.exists() and downloaded_path.stat().st_size > 1000:
+            if dl_btn is not None:
+                logger.info(f"[FlowCDP] Located completed video download button in inspector panel for Scene {scene_num}. Clicking now...")
+                try:
+                    async with page.expect_download(timeout=20000) as download_info:
+                        await dl_btn.click(timeout=4000)
+                    download = await download_info.value
+                    await download.save_as(str(target_download_file))
+                    downloaded_path = target_download_file
+                    logger.info(f"[FlowCDP] Downloaded Scene {scene_num} via inspector download button -> {target_download_file}")
                     break
+                except Exception as dl_err:
+                    logger.debug(f"[FlowCDP] Inspector download click note (checking Downloads dir next): {dl_err}")
+                    await page.wait_for_timeout(2000)
+                    new_dl = self._find_new_download_in_dir(downloads_baseline, submit_timestamp)
+                    if new_dl and new_dl.exists() and new_dl.stat().st_size > 1000:
+                        if new_dl.resolve() != target_download_file.resolve():
+                            shutil.copy2(str(new_dl), str(target_download_file))
+                        downloaded_path = target_download_file
+                        logger.info(f"[FlowCDP] Captured Scene {scene_num} from Downloads dir after inspector click -> {target_download_file}")
+                        break
 
-                # Fallback: fetch the video stream bytes directly from the new <video src> inside browser context
+            if video_finished:
+                # Direct <video src> stream fallback if download button used blob/direct URL
                 target_src = new_srcs[0] if new_srcs else (curr_video_srcs[0] if curr_video_srcs else None)
                 if target_src and target_src.startswith("http"):
                     try:

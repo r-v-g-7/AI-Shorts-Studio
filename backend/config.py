@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     VIDEO_GENERATION_PROVIDER: str = "flow_browser"    # "flow_browser" (CDP), "gemini" (API), or "mock" (offline)
     CDP_DEBUGGING_URL: str = "http://127.0.0.1:9222"   # Chrome DevTools Protocol endpoint (--remote-debugging-port=9222)
     FLOW_URL: str = "https://labs.google/fx/tools/flow"
-    FLOW_SCENE_TIMEOUT_SECONDS: int = 240
+    FLOW_SCENE_TIMEOUT_SECONDS: int = 180
     VIDEO_POLL_INTERVAL_SECONDS: int = 10
     VIDEO_MAX_POLL_TIMEOUT_SECONDS: int = 360
     VIDEO_ASPECT_RATIO: str = "9:16"
