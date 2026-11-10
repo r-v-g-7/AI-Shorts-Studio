@@ -26,6 +26,82 @@ logger = logging.getLogger(__name__)
 _EDGE_VOICE_RE = re.compile(r"^[a-z]{2,3}-[A-Za-z]{2,4}-\w+Neural$")
 _TICKS_PER_SECOND = 10_000_000  # edge-tts offsets/durations are in 100-nanosecond ticks
 
+# Multilingual Neural Voice & Regional Dialect Registry
+VOICE_PROFILES: Dict[str, Dict[str, Any]] = {
+    "en-IN": {
+        "voice": "en-IN-PrabhatNeural",
+        "alt_voice": "en-IN-NeerjaNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz",
+        "lang_code": "en-IN",
+        "label": "English (India) - Prabhat",
+        "language_name": "English (India)"
+    },
+    "en-US": {
+        "voice": "en-US-AndrewNeural",
+        "alt_voice": "en-US-AvaNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz",
+        "lang_code": "en-US",
+        "label": "English (US) - Andrew",
+        "language_name": "English (US)"
+    },
+    "hi-IN": {
+        "voice": "hi-IN-MadhurNeural",
+        "alt_voice": "hi-IN-SwaraNeural",
+        "rate": "-5%",
+        "pitch": "+0Hz",
+        "lang_code": "hi-IN",
+        "label": "Hindi (India) - Madhur",
+        "language_name": "Hindi"
+    },
+    "bn-IN": {
+        "voice": "bn-IN-BashkarNeural",
+        "alt_voice": "bn-IN-TanishaaNeural",
+        "rate": "-3%",
+        "pitch": "+0Hz",
+        "lang_code": "bn-IN",
+        "label": "Bengali (India) - Bashkar",
+        "language_name": "Bengali"
+    },
+    "pa-IN": {
+        "voice": "hi-IN-MadhurNeural",
+        "alt_voice": "hi-IN-SwaraNeural",
+        "rate": "+2%",
+        "pitch": "+2Hz",
+        "lang_code": "hi-IN",
+        "label": "Punjabi (Cadence) - Madhur",
+        "language_name": "Punjabi"
+    },
+    "mr-IN": {
+        "voice": "mr-IN-ManoharNeural",
+        "alt_voice": "mr-IN-AarohiNeural",
+        "rate": "-3%",
+        "pitch": "+0Hz",
+        "lang_code": "mr-IN",
+        "label": "Marathi (India) - Manohar",
+        "language_name": "Marathi"
+    },
+    "haryanvi": {
+        "voice": "hi-IN-MadhurNeural",
+        "alt_voice": "hi-IN-SwaraNeural",
+        "rate": "-2%",
+        "pitch": "-2Hz",
+        "lang_code": "hi-IN",
+        "label": "Haryanvi (Deep Cadence) - Madhur",
+        "language_name": "Haryanvi"
+    },
+    "rajasthani": {
+        "voice": "hi-IN-MadhurNeural",
+        "alt_voice": "hi-IN-SwaraNeural",
+        "rate": "-4%",
+        "pitch": "+3Hz",
+        "lang_code": "hi-IN",
+        "label": "Rajasthani (Melodic Cadence) - Madhur",
+        "language_name": "Rajasthani"
+    },
+}
+
 # Default comedic SSML break durations (seconds)
 SSML_BREAK_DURATIONS = {
     "...": 0.500,  # <break time="500ms"/>
@@ -45,6 +121,29 @@ class AudioService:
     _kokoro_instance: Optional[Kokoro] = None
 
     # ------------------------------------------------------------------
+    # Multilingual & Dialect Profile Resolution
+    # ------------------------------------------------------------------
+    @classmethod
+    def resolve_language_profile(cls, language: Optional[str] = None, voice_override: Optional[str] = None) -> Dict[str, Any]:
+        """Resolves language or dialect into neural voice, rate, pitch, and locale."""
+        key = (language or "en-IN").strip()
+        k_lower = key.lower().replace("_", "-")
+        matched_profile = None
+        for p_key, p_val in VOICE_PROFILES.items():
+            if k_lower == p_key.lower() or k_lower in p_key.lower() or k_lower == p_val["language_name"].lower():
+                matched_profile = p_val.copy()
+                break
+        if not matched_profile:
+            matched_profile = VOICE_PROFILES["en-IN"].copy()
+
+        if voice_override and voice_override.strip():
+            matched_profile["voice"] = voice_override.strip()
+            v_parts = voice_override.strip().split("-")
+            if len(v_parts) >= 2:
+                matched_profile["lang_code"] = f"{v_parts[0]}-{v_parts[1]}"
+        return matched_profile
+
+    # ------------------------------------------------------------------
     # Provider Detection (ElevenLabs -> SSML edge-tts -> Kokoro)
     # ------------------------------------------------------------------
     @classmethod
@@ -57,18 +156,23 @@ class AudioService:
     # SSML Formatting & Comedic Pauses / Prosody Engine
     # ------------------------------------------------------------------
     @classmethod
-    def format_comedic_ssml(cls, text: str, voice: Optional[str] = None, rate: str = "-6%") -> str:
+    def format_comedic_ssml(
+        cls,
+        text: str,
+        voice: Optional[str] = None,
+        rate: str = "-6%",
+        lang_code: Optional[str] = None
+    ) -> str:
         """
         Converts narrative text and punctuation (!, ?, ..., :, ,) into natural SSML with
-        comedic breaks and elevated prosody on exclamations:
-          - Ellipsis (`...`) -> `<break time="500ms"/>`
-          - Exclamation (`!`) -> `<break time="400ms"/>` with `<prosody rate="-3%" pitch="+4Hz">`
-          - Question (`?`) -> `<break time="350ms"/>` with rising pitch `<prosody rate="-4%" pitch="+6Hz">`
-          - Colon (`:`) -> `<break time="250ms"/>`
-          - Comma (`,`) -> `<break time="250ms"/>`
-          - Overall baseline speed: `-6%`
+        comedic breaks and elevated prosody on exclamations.
         """
         selected_voice = voice or settings.DEFAULT_VOICE
+        locale = lang_code
+        if not locale:
+            parts = selected_voice.split("-")
+            locale = f"{parts[0]}-{parts[1]}" if len(parts) >= 2 else "en-US"
+
         raw = cls.strip_ssml_tags(text).strip()
 
         # Split into sentence-like clauses keeping terminal punctuation (!, ?, ..., .)
@@ -90,19 +194,16 @@ class AudioService:
             clause_ssml = re.sub(r":", ': <break time="250ms"/>', clause_ssml)
 
             if "!" in punct:
-                # Exclamation -> prosody contour <prosody rate="-3%" pitch="+4Hz"> + 400ms comedic pause
                 ssml_clauses.append(
                     f'<prosody rate="-3%" pitch="+4Hz">{clause_ssml}!</prosody>'
                     f'<break time="400ms"/>'
                 )
             elif "?" in punct:
-                # Question -> rising pitch contour + 350ms pause
                 ssml_clauses.append(
                     f'<prosody rate="-4%" pitch="+6Hz">{clause_ssml}?</prosody>'
                     f'<break time="350ms"/>'
                 )
             elif "..." in punct or "…" in punct:
-                # Ellipsis -> dramatic comedic suspense pause 500ms
                 ssml_clauses.append(f'{clause_ssml}... <break time="500ms"/>')
             elif "." in punct:
                 ssml_clauses.append(f'{clause_ssml}. <break time="280ms"/>')
@@ -111,7 +212,7 @@ class AudioService:
 
         body = " ".join(ssml_clauses)
         return (
-            '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="hi-IN">'
+            f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{locale}">'
             f'<voice name="{selected_voice}">'
             f'<prosody rate="{rate}">{body}</prosody>'
             "</voice>"
@@ -841,4 +942,162 @@ class AudioService:
             "word_count": len(word_timestamps),
             "inference_time_seconds": round(inference_duration, 3),
             "timestamps": word_timestamps
+        }
+
+    # ------------------------------------------------------------------
+    # Multilingual Timeline Budgeting & Direct Scene Audio Engine
+    # ------------------------------------------------------------------
+    @classmethod
+    def synthesize_direct_scenes(
+        cls,
+        scenes: List[Any],
+        language: str = "en-IN",
+        voice: Optional[str] = None,
+        target_total_duration: float = 60.0,
+        job_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Synthesizes speech per scene with multilingual neural TTS and timeline budgeting:
+        - Resolves language / dialect profile (English, Hindi, Bengali, Punjabi, Marathi, Haryanvi, Rajasthani).
+        - Computes target per-scene intervals (e.g. 60s / 4 scenes = 15.0s per scene).
+        - Pads or subtle-scales each scene audio so transitions land exactly on clean 12-15s intervals.
+        - Synchronizes scene.duration_seconds and global WordTimestamps in lockstep.
+        - Concatenates into master audio/narration.wav and saves audio/words.json.
+        """
+        if not scenes:
+            raise ValueError("No scenes provided for audio synthesis.")
+
+        start_time = time.time()
+        profile = cls.resolve_language_profile(language, voice_override=voice)
+        selected_voice = profile["voice"]
+        rate = profile["rate"]
+        pitch = profile["pitch"]
+        lang_code = profile["lang_code"]
+
+        num_scenes = len(scenes)
+        target_scene_dur = round(target_total_duration / max(1, num_scenes), 2)
+        sample_rate = 24000
+
+        all_scene_samples: List[np.ndarray] = []
+        global_word_timestamps: List[WordTimestamp] = []
+        cumulative_time_offset = 0.0
+
+        job_dir = JobService.get_job_directory(job_id) if job_id else (settings.STORAGE_DIR / "temp")
+        audio_dir = job_dir / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+
+        for s_idx, scene in enumerate(scenes):
+            raw_text = getattr(scene, "narration", "") if hasattr(scene, "narration") else scene.get("narration", "")
+            clean_text = cls.strip_ssml_tags(raw_text).strip()
+            if not clean_text:
+                continue
+
+            scene_num = s_idx + 1
+            with tempfile.TemporaryDirectory() as tmp:
+                mp3_p = Path(tmp) / f"scene_{scene_num:02d}.mp3"
+                wav_p = Path(tmp) / f"scene_{scene_num:02d}.wav"
+
+                if is_edge_voice(selected_voice):
+                    evs = cls._edge_stream_blocking(clean_text, selected_voice, rate, mp3_p, pitch=pitch)
+                    cls._mp3_to_wav(mp3_p, wav_p, sample_rate=sample_rate)
+                    s_samples, sample_rate = sf.read(str(wav_p), dtype="float32")
+                    raw_dur = float(len(s_samples)) / float(sample_rate)
+                    raw_ts, _ = cls._events_to_word_timestamps(clean_text, evs, raw_dur)
+                    s_samples, s_ts = cls._apply_ssml_breaks_and_prosody(s_samples, sample_rate, raw_ts)
+                else:
+                    s_samples, sample_rate, s_ts, _ = cls._run_kokoro(clean_text, selected_voice, speed=1.0)
+
+            actual_dur = float(len(s_samples)) / float(sample_rate)
+
+            # Timeline Budgeting:
+            # If scene is shorter than target interval (e.g. 13s < 15s), pad with natural silence
+            # so each scene transitions cleanly on exact 15-second intervals.
+            if actual_dur < target_scene_dur:
+                pad_sec = target_scene_dur - actual_dur
+                pad_samples = np.zeros(int(round(pad_sec * sample_rate)), dtype=np.float32)
+                s_samples = np.concatenate([s_samples, pad_samples])
+                final_scene_dur = target_scene_dur
+            else:
+                tail_pad = np.zeros(int(round(0.20 * sample_rate)), dtype=np.float32)
+                s_samples = np.concatenate([s_samples, tail_pad])
+                final_scene_dur = float(len(s_samples)) / float(sample_rate)
+
+            # Shift scene word timestamps to global master timeline
+            for wt in s_ts:
+                global_word_timestamps.append(
+                    WordTimestamp(
+                        word=wt.word,
+                        start_time=round(wt.start_time + cumulative_time_offset, 3),
+                        end_time=round(min(wt.end_time + cumulative_time_offset, cumulative_time_offset + final_scene_dur), 3)
+                    )
+                )
+
+            # Save individual scene WAV
+            scene_wav = audio_dir / f"scene_{scene_num:02d}.wav"
+            sf.write(str(scene_wav), s_samples, sample_rate, subtype="PCM_16")
+
+            # Update scene duration in object/dict
+            if hasattr(scene, "duration_seconds"):
+                scene.duration_seconds = round(final_scene_dur, 3)
+            elif isinstance(scene, dict):
+                scene["duration_seconds"] = round(final_scene_dur, 3)
+
+            all_scene_samples.append(s_samples)
+            cumulative_time_offset += final_scene_dur
+
+        master_samples = np.concatenate(all_scene_samples) if all_scene_samples else np.zeros(24000, dtype=np.float32)
+        total_audio_dur = float(len(master_samples)) / float(sample_rate)
+
+        master_wav_path = audio_dir / "narration.wav"
+        words_json_path = audio_dir / "words.json"
+        sf.write(str(master_wav_path), master_samples, sample_rate, subtype="PCM_16")
+
+        timestamp_dicts = [w.model_dump() for w in global_word_timestamps]
+        with open(words_json_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "job_id": job_id,
+                "engine": "edge-tts-multilingual",
+                "voice": selected_voice,
+                "language": language,
+                "lang_code": lang_code,
+                "target_total_duration": target_total_duration,
+                "actual_duration_seconds": round(total_audio_dur, 3),
+                "scene_count": len(scenes),
+                "timestamps": timestamp_dicts
+            }, f, indent=2, ensure_ascii=False)
+
+        # Update Job Manifest & DB if job_id provided
+        if job_id:
+            manifest = JobService.load_manifest(job_id)
+            if manifest:
+                manifest.audio_file = str(master_wav_path)
+                manifest.word_timestamps = global_word_timestamps
+                manifest.render_metadata["total_duration_seconds"] = round(total_audio_dur, 3)
+                manifest.render_metadata["audio_sample_rate"] = sample_rate
+                manifest.render_metadata["voice"] = selected_voice
+                manifest.render_metadata["language"] = language
+                manifest.render_metadata["tts_engine"] = "edge-tts-multilingual"
+                manifest.status = JobStatus.AUDIO_READY
+                manifest.scenes = scenes
+                JobService.save_manifest(manifest)
+                JobService.set_scenes(job_id, scenes)
+
+            JobRepository.update_job_status(job_id, JobStatus.AUDIO_READY.value)
+            JobRepository.add_log(
+                job_id,
+                "INFO",
+                "AUDIO_SYNTHESIS",
+                f"Generated 60s Multilingual Speech ({total_audio_dur:.2f}s, {len(scenes)} scenes, {len(global_word_timestamps)} words) "
+                f"using voice '{selected_voice}' ({profile['label']})."
+            )
+
+        return {
+            "audio_path": str(master_wav_path),
+            "timestamps_path": str(words_json_path),
+            "duration_seconds": round(total_audio_dur, 3),
+            "sample_rate": sample_rate,
+            "engine": "edge-tts-multilingual",
+            "voice": selected_voice,
+            "language": language,
+            "timestamps": global_word_timestamps
         }

@@ -22,6 +22,20 @@ def seconds_to_ass_time(seconds: float) -> str:
     return f"{hrs}:{mins:02d}:{secs:02d}.{centis:02d}"
 
 
+def seconds_to_srt_time(seconds: float) -> str:
+    """Converts seconds float to SRT timestamp format: HH:MM:SS,mmm"""
+    if seconds < 0:
+        seconds = 0.0
+    hrs = int(seconds // 3600)
+    mins = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int(round((seconds - int(seconds)) * 1000))
+    if millis >= 1000:
+        secs += 1
+        millis = 0
+    return f"{hrs:02d}:{mins:02d}:{secs:02d},{millis:03d}"
+
+
 def sanitize_ass_word(word: str) -> str:
     """Removes characters that ASS interprets as override tags/newlines so Roman Hinglish renders verbatim."""
     return word.replace("\\", "").replace("{", "").replace("}", "").replace("\n", " ").strip()
@@ -130,6 +144,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         target_path.parent.mkdir(parents=True, exist_ok=True)
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(ass_content)
+
+        # Also generate companion SRT subtitle file
+        srt_events: List[str] = []
+        srt_idx = 1
+        for i in range(0, total_words, chunk_size):
+            chunk = word_timestamps[i:i + chunk_size]
+            st_sec = chunk[0].start_time
+            en_sec = chunk[-1].end_time
+            if en_sec <= st_sec:
+                en_sec = st_sec + 0.5
+            st_srt = seconds_to_srt_time(st_sec)
+            en_srt = seconds_to_srt_time(en_sec)
+            txt_srt = " ".join(sanitize_ass_word(w.word).upper() for w in chunk)
+            srt_events.append(f"{srt_idx}\n{st_srt} --> {en_srt}\n{txt_srt}\n")
+            srt_idx += 1
+
+        srt_path = target_path.with_suffix(".srt")
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(srt_events))
 
         # Update Job Manifest & DB if job_id provided
         if job_id:

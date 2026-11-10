@@ -23,11 +23,23 @@ function App() {
   const [statusMessage, setStatusMessage] = useState("");
   const [activeTab, setActiveTab] = useState("scenes"); // scenes, reference, qc
 
+  // Direct Script & Visual Prompts States
+  const [creationMode, setCreationMode] = useState("DIRECT"); // "DIRECT" or "RAW_SCRIPT"
+  const [selectedLanguage, setSelectedLanguage] = useState("en-IN");
+  const [targetDuration, setTargetDuration] = useState(60);
+  const [rawScript, setRawScript] = useState("");
+  const [scenesList, setScenesList] = useState([
+    { narration: "", visual_prompt: "" },
+    { narration: "", visual_prompt: "" },
+    { narration: "", visual_prompt: "" },
+    { narration: "", visual_prompt: "" },
+  ]);
+
   // Form states
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("");
   const [visualStyle, setVisualStyle] = useState("deep_dive_3d");
-  const [selectedPreset, setSelectedPreset] = useState("preset_30s");
+  const [selectedPreset, setSelectedPreset] = useState("preset_60s");
   const [qualityMode, setQualityMode] = useState("BALANCED");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
@@ -159,27 +171,64 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // 1-Click: Create Project and IMMEDIATELY execute Full Video Pipeline
+  const updateScene = (idx, field, val) => {
+    setScenesList(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: val };
+      return next;
+    });
+  };
+
+  const addScene = () => {
+    if (scenesList.length >= 6) return;
+    setScenesList(prev => [...prev, { narration: "", visual_prompt: "" }]);
+  };
+
+  const removeScene = (idx) => {
+    if (scenesList.length <= 2) return;
+    setScenesList(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  // 1-Click: Create Direct Project and IMMEDIATELY execute 60s Video Pipeline
   const handleCreateAndGenerate = async (e) => {
     if (e) e.preventDefault();
     setFormError("");
-    if (!title.trim() || !topic.trim()) {
-      setFormError("Please enter both the title and story description.");
-      return;
+
+    if (creationMode === "DIRECT") {
+      const emptyIdx = scenesList.findIndex(s => !s.narration.trim() || !s.visual_prompt.trim());
+      if (emptyIdx !== -1) {
+        setFormError(`Please enter both Voiceover Script and Visual Prompt for Scene ${emptyIdx + 1}.`);
+        return;
+      }
+    } else {
+      if (!rawScript.trim() || rawScript.trim().length < 10) {
+        setFormError("Please enter your complete voiceover script (at least 10 characters).");
+        return;
+      }
     }
 
     setIsSubmitting(true);
-    setStatusMessage("⚡ Creating project and launching 1-Click Automated Pipeline...");
+    setStatusMessage(`⚡ Creating project and launching ${targetDuration}s Multilingual Pipeline...`);
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/jobs/create-and-generate", {
+      const payload = {
+        title: title.trim() || undefined,
+        language: selectedLanguage,
+        target_duration: Number(targetDuration),
+        visual_style: visualStyle,
+        quality_mode: qualityMode,
+        creation_mode: creationMode,
+        scenes: creationMode === "DIRECT" ? scenesList.map(s => ({
+          narration: s.narration.trim(),
+          visual_prompt: s.visual_prompt.trim()
+        })) : undefined,
+        raw_script: creationMode === "RAW_SCRIPT" ? rawScript.trim() : undefined,
+        num_scenes: creationMode === "RAW_SCRIPT" ? 4 : undefined
+      };
+
+      const res = await fetch("http://127.0.0.1:8000/api/short/create_direct", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          topic: topic.trim(),
-          visual_style: visualStyle,
-          quality_mode: qualityMode
-        })
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
@@ -189,9 +238,7 @@ function App() {
 
       const data = await res.json();
       const newJobId = data.job.id;
-      setTitle("");
-      setTopic("");
-      setStatusMessage("🚀 Full Video Generation started! Script, Kokoro voice, AI visuals, and FFmpeg rendering are running automatically.");
+      setStatusMessage(`🚀 Full Video Generation started! Multilingual neural voice (${selectedLanguage}), 60s timeline sync, and 9:16 rendering running.`);
       await selectJob(newJobId);
       await loadData(newJobId);
     } catch (err) {
@@ -332,8 +379,9 @@ function App() {
           
           {/* 1-Click Create & Generate Card */}
           <div className="gradient-border rounded-xl p-5 shadow-xl">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400 mb-4 flex items-center gap-2">
-              <span>⚡</span> 1-Click Video Generator
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400 mb-3 flex items-center justify-between">
+              <span className="flex items-center gap-2"><span>⚡</span> Studio Creator</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">60s Direct</span>
             </h2>
 
             {formError && (
@@ -342,53 +390,176 @@ function App() {
               </div>
             )}
 
+            {/* Creation Mode Toggle */}
+            <div className="flex rounded-lg bg-gray-900/90 p-1 border border-gray-800 mb-4">
+              <button
+                type="button"
+                onClick={() => setCreationMode("DIRECT")}
+                className={`flex-1 py-1.5 px-2 rounded-md text-xs font-semibold transition ${
+                  creationMode === "DIRECT"
+                    ? "bg-blue-600 text-white shadow"
+                    : "text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                ✨ Direct Scenes
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreationMode("RAW_SCRIPT")}
+                className={`flex-1 py-1.5 px-2 rounded-md text-xs font-semibold transition ${
+                  creationMode === "RAW_SCRIPT"
+                    ? "bg-blue-600 text-white shadow"
+                    : "text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                📝 Raw Script
+              </button>
+            </div>
+
             <form onSubmit={handleCreateAndGenerate} className="space-y-4">
+              {/* Optional Project Title */}
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1.5">Short Title</label>
+                <label className="block text-xs font-medium text-gray-300 mb-1">Project Title (Optional)</label>
                 <input
                   type="text"
-                  placeholder="e.g. The Secrets of Deep Sea Bioluminescence"
+                  placeholder="e.g. Cigarette Smoke Effects on Lungs"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-gray-900/80 border border-gray-700 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                  className="w-full px-3 py-2 rounded-lg bg-gray-900/80 border border-gray-700 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 transition"
                   disabled={isSubmitting}
                 />
               </div>
 
+              {/* Language & Voice Selector */}
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1.5">Story / Narrative Hook (Up to 10,000 chars)</label>
-                <textarea
-                  placeholder="Enter your complete story description, viral hook, or script concept..."
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  rows="4"
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-gray-900/80 border border-gray-700 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
-                  disabled={isSubmitting}
-                />
-              </div>
-
-              {/* Production Presets */}
-              <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1.5">Target Duration & Pacing</label>
+                <label className="block text-xs font-medium text-gray-300 mb-1">🗣️ Narration Language / Dialect</label>
                 <select
-                  value={selectedPreset}
-                  onChange={(e) => setSelectedPreset(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-gray-900/80 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                  value={selectedLanguage}
+                  onChange={(e) => setSelectedLanguage(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-gray-900/80 border border-gray-700 text-xs text-gray-100 focus:outline-none focus:border-blue-500 transition"
+                  disabled={isSubmitting}
                 >
-                  <option value="preset_30s">⚡ 30s Viral Hook (~75 words)</option>
-                  <option value="preset_45s">📖 45s Story Arc (~110 words)</option>
-                  <option value="preset_60s">🔬 60s Deep Dive (~150 words)</option>
-                  <option value="preset_draft">🚀 Fast Draft Preview</option>
+                  <option value="en-IN">English (India) — Prabhat Neural</option>
+                  <option value="en-US">English (US) — Andrew Neural</option>
+                  <option value="hi-IN">Hindi (India) — Madhur Neural</option>
+                  <option value="bn-IN">Bengali (India) — Bashkar Neural</option>
+                  <option value="pa-IN">Punjabi (Cadence) — Madhur</option>
+                  <option value="mr-IN">Marathi (India) — Manohar Neural</option>
+                  <option value="haryanvi">Haryanvi (Deep Cadence) — Madhur</option>
+                  <option value="rajasthani">Rajasthani (Melodic Cadence) — Madhur</option>
                 </select>
               </div>
 
+              {/* Target Duration Selector (Defaulted to 60s) */}
+              <div>
+                <label className="block text-xs font-medium text-gray-300 mb-1">⏱️ Target Duration</label>
+                <select
+                  value={targetDuration}
+                  onChange={(e) => setTargetDuration(Number(e.target.value))}
+                  className="w-full px-3 py-2 rounded-lg bg-gray-900/80 border border-gray-700 text-xs text-gray-100 focus:outline-none focus:border-blue-500 transition"
+                  disabled={isSubmitting}
+                >
+                  <option value={60}>60s Full Short (~140-160 words) [Default]</option>
+                  <option value={45}>45s Story Arc (~110-120 words)</option>
+                  <option value={30}>30s Viral Hook (~70-80 words)</option>
+                </select>
+              </div>
+
+              {/* MODE A: Direct Scene-by-Scene */}
+              {creationMode === "DIRECT" && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                      Scene Blocks ({scenesList.length} scenes • ~{Math.round(targetDuration / scenesList.length)}s each)
+                    </span>
+                    {scenesList.length < 6 && (
+                      <button
+                        type="button"
+                        onClick={addScene}
+                        className="text-[11px] text-blue-400 hover:text-blue-300 font-semibold"
+                      >
+                        + Add Scene
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                    {scenesList.map((scene, idx) => (
+                      <div key={idx} className="p-3 rounded-lg bg-gray-900/60 border border-gray-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                            Scene {idx + 1}
+                          </span>
+                          {scenesList.length > 2 && (
+                            <button
+                              type="button"
+                              onClick={() => removeScene(idx)}
+                              className="text-gray-500 hover:text-red-400 text-xs"
+                              title="Delete scene"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] text-gray-400 mb-0.5">Voiceover Script (Exact spoken words)</label>
+                          <textarea
+                            rows="2"
+                            value={scene.narration}
+                            onChange={(e) => updateScene(idx, "narration", e.target.value)}
+                            placeholder={`Exact voiceover spoken in scene ${idx + 1}...`}
+                            className="w-full px-2.5 py-1.5 rounded bg-gray-950 border border-gray-800 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500 transition"
+                            disabled={isSubmitting}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] text-gray-400 mb-0.5">Visual Prompt (Sent to Google Flow)</label>
+                          <textarea
+                            rows="2"
+                            value={scene.visual_prompt}
+                            onChange={(e) => updateScene(idx, "visual_prompt", e.target.value)}
+                            placeholder={`Camera framing, character action, and environment instructions...`}
+                            className="w-full px-2.5 py-1.5 rounded bg-gray-950 border border-gray-800 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500 transition"
+                            disabled={isSubmitting}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* MODE B: Raw Script + Auto Visuals */}
+              {creationMode === "RAW_SCRIPT" && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-gray-300">Complete Voiceover Script</label>
+                    <span className="text-[10px] text-gray-500">Verbatim Ingest</span>
+                  </div>
+                  <textarea
+                    rows="6"
+                    value={rawScript}
+                    onChange={(e) => setRawScript(e.target.value)}
+                    placeholder="Paste complete script here (~140-160 words). The AI will break it into 4 visual scenes without altering, rewriting, or hallucinating a single spoken word..."
+                    className="w-full px-3 py-2 rounded-lg bg-gray-900/80 border border-gray-700 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 transition"
+                    disabled={isSubmitting}
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1 italic">
+                    ⚡ LLM will ONLY parse this text into 4 visual scenes for Google Flow. Spoken words will be preserved 100% verbatim.
+                  </p>
+                </div>
+              )}
+
               {/* Visual Style */}
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1.5">Visual Aesthetic</label>
+                <label className="block text-xs font-medium text-gray-300 mb-1">Visual Aesthetic</label>
                 <select
                   value={visualStyle}
                   onChange={(e) => setVisualStyle(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-gray-900/80 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                  className="w-full px-3 py-2 rounded-lg bg-gray-900/80 border border-gray-700 text-xs text-gray-100 focus:outline-none focus:border-blue-500 transition"
                   disabled={isSubmitting}
                 >
                   <option value="deep_dive_3d">🌊 Deep Dive 3D (Unreal 5 Nanite Macro)</option>
@@ -402,14 +573,14 @@ function App() {
 
               {/* Render Quality Mode */}
               <div>
-                <label className="block text-xs font-medium text-gray-300 mb-1.5">Encoding Mode</label>
+                <label className="block text-xs font-medium text-gray-300 mb-1">Encoding Mode</label>
                 <div className="grid grid-cols-3 gap-2">
                   {["DRAFT", "BALANCED", "HIGH_QUALITY"].map((mode) => (
                     <button
                       key={mode}
                       type="button"
                       onClick={() => setQualityMode(mode)}
-                      className={`py-1.5 text-xs rounded-lg border font-medium transition ${
+                      className={`py-1 text-xs rounded-lg border font-medium transition ${
                         qualityMode === mode
                           ? 'bg-blue-600/30 border-blue-500 text-blue-300'
                           : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
@@ -425,10 +596,10 @@ function App() {
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full mt-2 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-bold text-sm shadow-xl shadow-emerald-600/25 disabled:opacity-50 transition flex items-center justify-center gap-2"
+                className="w-full mt-2 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-bold text-xs shadow-xl shadow-emerald-600/25 disabled:opacity-50 transition flex items-center justify-center gap-2"
               >
                 <span>⚡</span>
-                {isSubmitting ? "Creating & Generating..." : "⚡ Create & Generate New Short"}
+                {isSubmitting ? "Creating & Generating..." : `⚡ Create & Generate ${targetDuration}s Short`}
               </button>
             </form>
           </div>

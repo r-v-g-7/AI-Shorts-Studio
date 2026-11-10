@@ -115,6 +115,16 @@ class VideoRenderService:
         if scene_count == 0:
             return []
 
+        # 1. Check if scenes already have calibrated duration_seconds matching total_audio_duration
+        explicit_durs = [
+            float(s.duration_seconds) for s in scenes
+            if hasattr(s, "duration_seconds") and s.duration_seconds and float(s.duration_seconds) > 1.0
+        ]
+        if len(explicit_durs) == scene_count and abs(sum(explicit_durs) - total_audio_duration) < 1.0:
+            durations = [round(d, 3) for d in explicit_durs]
+            durations[-1] = round(max(0.5, total_audio_duration - sum(durations[:-1])), 3)
+            return durations
+
         # If word timestamps exist, map them to scenes by word count
         if word_timestamps and len(word_timestamps) > 0:
             total_words = len(word_timestamps)
@@ -361,8 +371,9 @@ class VideoRenderService:
                     safe_path = str(clip.resolve()).replace("\\", "/")
                     f.write(f"file '{safe_path}'\n")
 
-            # 6. Assemble complete composite command
-            ass_escaped = str(Path(manifest.subtitle_file).resolve()).replace("\\", "/").replace(":", "\\:")
+            # 6. Assemble complete composite command with hardened subtitle burning
+            raw_sub_path = Path(manifest.subtitle_file).resolve()
+            sub_escaped = str(raw_sub_path.as_posix()).replace(":", r"\:")
 
             final_render_cmd = [
                 "ffmpeg", "-y",
@@ -375,9 +386,9 @@ class VideoRenderService:
             # Optional BGM input with audio ducking and loudness normalization
             if bgm_path and Path(bgm_path).exists():
                 final_render_cmd.extend(["-stream_loop", "-1", "-i", str(Path(bgm_path).resolve())])
-                # Filter graph: Burn ASS + Duck BGM and mix + EBU R128 loudness normalization
+                # Filter graph: Hard-burn subtitles + Duck BGM and mix + EBU R128 loudness normalization
                 filter_complex = (
-                    f"[0:v]ass='{ass_escaped}'[vfinal];"
+                    f"[0:v]subtitles='{sub_escaped}'[vfinal];"
                     f"[2:a]volume={bgm_volume:.2f}[bgm];"
                     f"[1:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[amixed];"
                     f"[amixed]loudnorm=I=-14:TP=-1.5:LRA=7[afinal]"
@@ -388,9 +399,9 @@ class VideoRenderService:
                     "-map", "[afinal]"
                 ])
             else:
-                # Direct narration mix with ASS burn + EBU R128 loudness normalization
+                # Direct narration mix with hardened subtitle burn + EBU R128 loudness normalization
                 filter_complex = (
-                    f"[0:v]ass='{ass_escaped}'[vfinal];"
+                    f"[0:v]subtitles='{sub_escaped}'[vfinal];"
                     f"[1:a]loudnorm=I=-14:TP=-1.5:LRA=7[afinal]"
                 )
                 final_render_cmd.extend([

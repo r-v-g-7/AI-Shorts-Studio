@@ -1,5 +1,6 @@
 import os
 import time
+import shutil
 import logging
 import subprocess
 from abc import ABC, abstractmethod
@@ -204,23 +205,36 @@ class MockVideoGenerator(BaseVideoGenerator):
         idx = scene_index if scene_index is not None else 0
         color = self.COLOR_PALETTES[idx % len(self.COLOR_PALETTES)]
 
-        logger.info(f"[MockVideoGenerator] Generating synthetic test clip for Scene {idx + 1} ({duration_seconds:.2f}s, {color})...")
+        logger.info(f"[MockVideoGenerator] Generating synthetic test clip for Scene {idx + 1} ({duration_seconds:.2f}s, testsrc pattern)...")
 
-        # Generate genuine 1080x1920 30fps vertical MP4 using FFmpeg
+        # Generate genuine 1080x1920 30fps vertical MP4 (>1.5MB) using FFmpeg
         cmd = [
             "ffmpeg", "-y",
             "-f", "lavfi",
-            "-i", f"color=c={color}:s=1080x1920:d={duration_seconds:.2f}:r=30",
+            "-i", "testsrc=size=1080x1920:rate=30",
             "-t", f"{duration_seconds:.2f}",
             "-c:v", "libx264",
             "-preset", "ultrafast",
-            "-crf", "22",
+            "-b:v", "2.5M",
+            "-minrate", "2M",
+            "-maxrate", "4M",
+            "-bufsize", "5M",
             "-pix_fmt", "yuv420p",
             str(output_path)
         ]
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if res.returncode != 0:
             raise RuntimeError(f"Mock video generation failed: {res.stderr.strip()}")
+
+        # Ensure clip is also copied to incoming_clips if job_id is provided
+        if job_id:
+            try:
+                from backend.services.scene_intake_service import SceneIntakeService
+                inc_dir = SceneIntakeService.get_incoming_directory(job_id)
+                inc_clip = inc_dir / output_path.name
+                shutil.copy2(str(output_path), str(inc_clip))
+            except Exception as e:
+                logger.warning(f"Could not copy mock clip to incoming_clips: {e}")
 
         return output_path
 

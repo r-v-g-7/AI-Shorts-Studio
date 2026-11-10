@@ -85,6 +85,26 @@ class JobManifest(BaseModel):
     })
 
 
+class DirectSceneItem(BaseModel):
+    narration: str = Field(..., min_length=1, description="Exact spoken narration words for this scene")
+    visual_prompt: str = Field(..., min_length=1, description="Exact visual instructions sent directly to Google Flow")
+    camera_movement: Optional[str] = Field(default=None, description="Camera directive if specified")
+
+
+class DirectShortCreateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200, description="Short title")
+    language: str = Field(default="en-IN", description="Language / dialect: en-IN, en-US, hi-IN, bn-IN, pa-IN, mr-IN, haryanvi, rajasthani")
+    voice: Optional[str] = Field(default=None, description="Neural voice identifier")
+    target_duration: float = Field(default=60.0, ge=10.0, le=120.0, description="Target short duration in seconds")
+    visual_style: VisualStyle = Field(default=VisualStyle.DEEP_DIVE_3D)
+    quality_mode: Optional[str] = Field(default="BALANCED")
+    creation_mode: Optional[str] = Field(default="DIRECT")  # "DIRECT" or "RAW_SCRIPT"
+    scenes: Optional[List[DirectSceneItem]] = Field(default=None, description="Direct scenes list for Mode A")
+    raw_script: Optional[str] = Field(default=None, description="Raw complete script for Mode B")
+    num_scenes: Optional[int] = Field(default=4, ge=1, le=8)
+    provider_override: Optional[str] = None
+
+
 class JobCreateRequest(BaseModel):
     title: str = Field(..., min_length=2, max_length=200, example="The Mystery of Deep Sea Bioluminescence")
     topic: str = Field(..., min_length=5, max_length=10000, example="Explain how deep sea creatures produce light in the abyss")

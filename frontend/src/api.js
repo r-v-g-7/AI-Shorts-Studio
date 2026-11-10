@@ -56,3 +56,16 @@ export async function createJob(title, topic, visualStyle) {
   }
   return await res.json();
 }
+
+export async function createDirectShort(payload) {
+  const res = await fetch(`${API_BASE}/short/create_direct`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errorData = await res.json();
+    throw new Error(errorData.detail || "Failed to create direct short");
+  }
+  return await res.json();
+}

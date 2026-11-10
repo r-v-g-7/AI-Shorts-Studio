@@ -15,7 +15,9 @@ from backend.schemas.job_manifest import (
     JobCreateRequest,
     JobManifest,
     JobStatus,
-    VisualStyle
+    VisualStyle,
+    DirectShortCreateRequest,
+    DirectSceneItem
 )
 from backend.schemas.preset_schema import (
     PRODUCTION_PRESETS,
@@ -213,6 +215,38 @@ def create_and_generate_job(request: CreateAndGenerateRequest):
     job_id = job["id"]
 
     # Ensure watcher state and disk state start cleanly at Scene 1 (0/4)
+    DownloadsWatcher.get_instance().sync_job_disk_state(job_id, reset_clips=True)
+
+    qm = ProductionQueueManager.get_instance()
+    queue_res = qm.enqueue_job(
+        job_id=job_id,
+        action="GENERATE_FULL_VIDEO",
+        options={
+            "quality_mode": request.quality_mode or "BALANCED",
+            "provider_override": request.provider_override
+        }
+    )
+
+    return {
+        "job": job,
+        "queue": queue_res
+    }
+
+
+@app.post("/api/jobs/create-direct", status_code=status.HTTP_201_CREATED, tags=["Jobs"])
+@app.post("/api/short/create_direct", status_code=status.HTTP_201_CREATED, tags=["Jobs"])
+@app.post("/api/short/create-direct", status_code=status.HTTP_201_CREATED, tags=["Jobs"])
+def create_direct_short_endpoint(request: DirectShortCreateRequest):
+    """
+    Direct Script & Visual Prompt Input Entry Point:
+    Bypasses LLM rewriting, ingesting verbatim voiceover words and exact visual prompts.
+    Supports Multilingual Neural Voices (English, Hindi, Bengali, Punjabi, Marathi, Haryanvi, Rajasthani)
+    and 60s timeline budgeting.
+    """
+    job = PipelineController.create_direct_job(request)
+    job_id = job["id"]
+
+    # Ensure watcher state starts cleanly
     DownloadsWatcher.get_instance().sync_job_disk_state(job_id, reset_clips=True)
 
     qm = ProductionQueueManager.get_instance()

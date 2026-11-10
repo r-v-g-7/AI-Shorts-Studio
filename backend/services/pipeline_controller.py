@@ -11,11 +11,14 @@ from backend.schemas.job_manifest import (
     JobManifest,
     SceneSpec,
     VisualStyle,
-    JobCreateRequest
+    JobCreateRequest,
+    DirectShortCreateRequest,
+    DirectSceneItem
 )
 from backend.schemas.script_schema import (
     ScriptGenerationRequest,
-    ShortsScript
+    ShortsScript,
+    SceneScript
 )
 from backend.services.job_service import JobService
 from backend.services.script_service import ScriptService
@@ -52,6 +55,132 @@ class PipelineController:
         )
         job = JobService.create_job(request)
         return job
+
+    @classmethod
+    def create_direct_job(
+        cls,
+        request: DirectShortCreateRequest
+    ) -> Dict[str, Any]:
+        """
+        Creates a production job directly from user-provided scene scripts and visual prompts,
+        bypassing LLM rewriting entirely.
+        Mode A: Ingests user voiceover text and visual prompts verbatim into each scene.
+        Mode B: Splits raw script verbatim into scenes without rewriting words.
+        """
+        clean_title = (request.title or "").strip()
+        if not clean_title:
+            if request.scenes and len(request.scenes) > 0:
+                clean_title = f"Short: {request.scenes[0].narration[:36].strip()}..."
+            elif request.raw_script:
+                clean_title = f"Short: {request.raw_script[:36].strip()}..."
+            else:
+                clean_title = f"Direct Short ({request.language})"
+
+        # Handle Mode B: Raw Script + Auto Visuals
+        if (request.creation_mode == "RAW_SCRIPT" or not request.scenes) and request.raw_script:
+            parsed_script = ScriptService.parse_raw_script_to_scenes(
+                raw_script=request.raw_script,
+                num_scenes=request.num_scenes or 4,
+                visual_style=request.visual_style,
+                title=clean_title
+            )
+            scenes_data = [
+                DirectSceneItem(
+                    narration=s.narration,
+                    visual_prompt=s.visual_description,
+                    camera_movement=s.camera_movement
+                )
+                for s in parsed_script.scenes
+            ]
+        else:
+            scenes_data = request.scenes or []
+
+        if not scenes_data:
+            raise ValueError("Direct short must contain at least 1 scene or raw script.")
+
+        # Create basic Job record in SQLite and filesystem
+        job_create = JobCreateRequest(
+            title=clean_title,
+            topic=scenes_data[0].narration[:200] if scenes_data else "Direct Short",
+            visual_style=request.visual_style
+        )
+        job = JobService.create_job(job_create)
+        job_id = job["id"]
+
+        dur_per_scene = round(request.target_duration / max(1, len(scenes_data)), 2)
+        scene_specs: List[SceneSpec] = []
+        script_scenes: List[SceneScript] = []
+
+        for idx, s in enumerate(scenes_data):
+            v_p = s.visual_prompt.strip()
+            # Prepend core camera/aspect directives if not already present
+            if not v_p.lower().startswith("9:16"):
+                formatted_prompt = f"9:16 vertical, hyper-realistic 3D cinematic render. {v_p}"
+            else:
+                formatted_prompt = v_p
+
+            scene_specs.append(
+                SceneSpec(
+                    index=idx,
+                    narration=s.narration.strip(),
+                    visual_prompt=formatted_prompt,
+                    duration_seconds=dur_per_scene,
+                    camera_movement=s.camera_movement,
+                    is_validated=False
+                )
+            )
+            script_scenes.append(
+                SceneScript(
+                    index=idx,
+                    narration=s.narration.strip(),
+                    visual_description=v_p,
+                    camera_movement=s.camera_movement or "Cinematic continuous tracking shot",
+                    estimated_duration_seconds=dur_per_scene
+                )
+            )
+
+        complete_narration = " ".join(s.narration for s in scene_specs)
+        script_obj = ShortsScript(
+            title=clean_title,
+            hook=scene_specs[0].narration[:60],
+            complete_narration=complete_narration,
+            visual_style=request.visual_style,
+            target_audience="General audience",
+            scenes=script_scenes
+        )
+
+        # Write script.json in job workspace so Stage 1 is immediately satisfied
+        job_dir = JobService.get_job_directory(job_id)
+        script_file = job_dir / "script.json"
+        with open(script_file, "w", encoding="utf-8") as f:
+            f.write(script_obj.model_dump_json(indent=2))
+
+        # Export production prompts (prompts.json and prompts.txt)
+        ScenePromptManager.export_prompts(job_id, script_obj)
+
+        # Register scenes in SQLite and manifest
+        JobService.set_scenes(job_id, scene_specs)
+        manifest = JobService.load_manifest(job_id)
+        if manifest:
+            manifest.title = clean_title
+            manifest.script_data = script_obj.model_dump()
+            manifest.scenes = scene_specs
+            manifest.status = JobStatus.SCRIPT_READY
+            manifest.render_metadata["language"] = request.language
+            manifest.render_metadata["voice"] = request.voice
+            manifest.render_metadata["target_duration"] = request.target_duration
+            manifest.render_metadata["quality_mode"] = request.quality_mode or "BALANCED"
+            manifest.render_metadata["creation_mode"] = request.creation_mode or "DIRECT"
+            JobService.save_manifest(manifest)
+
+        JobRepository.update_job_status(job_id, JobStatus.SCRIPT_READY.value)
+        JobRepository.add_log(
+            job_id,
+            "INFO",
+            "SCRIPT_ENGINE",
+            f"Direct Short initialized with {len(scene_specs)} scenes (verbatim text, language='{request.language}', {request.target_duration}s target)."
+        )
+        return JobService.get_job(job_id)
 
     @classmethod
     def execute_script_stage(
@@ -186,15 +315,27 @@ class PipelineController:
             if not manifest or not manifest.scenes:
                 raise ValueError("Cannot synthesize audio: No scenes found in manifest. Generate script first.")
 
-            full_narration = " ".join(s.narration.strip() for s in manifest.scenes)
+            # Check if this job has multilingual / timeline budgeting metadata
+            target_duration = float(manifest.render_metadata.get("target_duration") or 60.0)
+            language = manifest.render_metadata.get("language") or "en-IN"
+            active_voice = voice or manifest.render_metadata.get("voice")
 
-            # Call AudioService
-            audio_result = AudioService.synthesize_speech(
-                text=full_narration,
-                voice=voice,
-                speed=speed,
-                job_id=job_id
-            )
+            if len(manifest.scenes) >= 2:
+                audio_result = AudioService.synthesize_direct_scenes(
+                    scenes=manifest.scenes,
+                    language=language,
+                    voice=active_voice,
+                    target_total_duration=target_duration,
+                    job_id=job_id
+                )
+            else:
+                full_narration = " ".join(s.narration.strip() for s in manifest.scenes)
+                audio_result = AudioService.synthesize_speech(
+                    text=full_narration,
+                    voice=active_voice,
+                    speed=speed,
+                    job_id=job_id
+                )
 
             # Update status to AUDIO_READY
             JobService.update_job_status(job_id, JobStatus.AUDIO_READY)
