@@ -197,9 +197,11 @@ class CreateAndGenerateRequest(BaseModel):
 
 
 @app.post("/api/jobs/create-and-generate", status_code=status.HTTP_201_CREATED, tags=["Jobs"])
+@app.post("/api/short/create", status_code=status.HTTP_201_CREATED, tags=["Jobs"])
 def create_and_generate_job(request: CreateAndGenerateRequest):
     """
-    1-Click Entry Point: Creates the project and immediately kicks off
+    1-Click Entry Point: Creates the project, resets/synchronizes watcher disk state
+    to 0/4 so UI counters never start desynced, and immediately kicks off
     the full automated production pipeline (Script -> Audio -> Subtitles -> AI Video -> FFmpeg 9:16 Render -> QC).
     """
     job_create = JobCreateRequest(
@@ -209,6 +211,9 @@ def create_and_generate_job(request: CreateAndGenerateRequest):
     )
     job = JobService.create_job(job_create)
     job_id = job["id"]
+
+    # Ensure watcher state and disk state start cleanly at Scene 1 (0/4)
+    DownloadsWatcher.get_instance().sync_job_disk_state(job_id, reset_clips=True)
 
     qm = ProductionQueueManager.get_instance()
     queue_res = qm.enqueue_job(
@@ -227,21 +232,49 @@ def create_and_generate_job(request: CreateAndGenerateRequest):
 
 
 @app.post("/api/jobs/{job_id}/generate-full-video", tags=["Pipeline"])
+@app.post("/api/short/resume/{job_id}", tags=["Pipeline"])
 def generate_full_video_endpoint(job_id: str, request: Optional[Dict[str, Any]] = None):
     """
-    1-Click trigger for existing job:
-    Executes Script -> Kokoro Voice -> ASS Subtitles -> AI Video Clips -> Conforming -> FFmpeg 9:16 Render -> QC.
+    1-Click Resume / Re-run trigger for existing job:
+    Validates on-disk scene clips first so UI counters never get desynced, then executes
+    Script -> Humanized Hindi Voice -> ASS Subtitles -> Missing AI Video Clips -> FFmpeg 9:16 Render -> QC.
     """
     job = JobService.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
-    qm = ProductionQueueManager.get_instance()
     opts = request or {}
-    res = qm.enqueue_job(job_id=job_id, action="GENERATE_FULL_VIDEO", options=opts)
+    reset_flag = bool(opts.get("reset_clips", False))
+    sync_state = DownloadsWatcher.get_instance().sync_job_disk_state(job_id, reset_clips=reset_flag)
+
+    qm = ProductionQueueManager.get_instance()
+    res = qm.resume_job(job_id=job_id, options=opts)
     if res.get("status") == "error":
         raise HTTPException(status_code=400, detail=res.get("message"))
-    return res
+    return {**res, "disk_sync": sync_state}
+
+
+class ShortResumeRequest(BaseModel):
+    job_id: str
+    reset_clips: Optional[bool] = False
+    options: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/short/resume", tags=["Pipeline"])
+def resume_short_body_endpoint(request: ShortResumeRequest):
+    """Body-based `/api/short/resume` endpoint that validates or resets disk state and resumes the job."""
+    job = JobService.get_job(request.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{request.job_id}' not found")
+
+    sync_state = DownloadsWatcher.get_instance().sync_job_disk_state(
+        request.job_id, reset_clips=bool(request.reset_clips)
+    )
+    qm = ProductionQueueManager.get_instance()
+    res = qm.resume_job(job_id=request.job_id, options=request.options or {})
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return {**res, "disk_sync": sync_state}
 
 
 @app.post("/api/jobs/{job_id}/open-folder", tags=["Jobs"])

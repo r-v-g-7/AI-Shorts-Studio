@@ -93,6 +93,10 @@ class VideoRenderService:
             "-c:v", "libx264",
             "-preset", preset,
             "-crf", crf,
+            "-b:v", target_bitrate,
+            "-minrate", "3M",
+            "-maxrate", "12M",
+            "-bufsize", "14M",
             "-pix_fmt", "yuv420p"
         ])
 
@@ -427,6 +431,13 @@ class VideoRenderService:
             probe_final = SceneIntakeService.probe_video(final_video_path)
             if not probe_final["is_valid"]:
                 raise RuntimeError(f"Rendered video failed verification: {probe_final.get('error')}")
+
+            # Also mirror final_short.mp4 to storage/jobs/<job_id>/final_short.mp4 so both paths are always populated
+            root_final_video_path = job_dir / "final_short.mp4"
+            try:
+                shutil.copy2(str(final_video_path), str(root_final_video_path))
+            except Exception as copy_err:
+                logger.debug(f"Could not mirror final_short.mp4 to job root: {copy_err}")
 
             # 8. Update manifest & SQLite records
             manifest.final_video_file = str(final_video_path)

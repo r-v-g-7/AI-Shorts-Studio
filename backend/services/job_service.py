@@ -44,7 +44,26 @@ class JobService:
     def load_manifest(cls, job_id: str) -> Optional[JobManifest]:
         manifest_path = cls.get_manifest_path(job_id)
         if not manifest_path.exists():
-            return None
+            db_job = JobRepository.get_job(job_id)
+            if not db_job:
+                return None
+            try:
+                style = VisualStyle(db_job.get("visual_style") or VisualStyle.SENTIENT_COMEDY.value)
+            except ValueError:
+                style = VisualStyle.SENTIENT_COMEDY
+            try:
+                status = JobStatus(db_job.get("status") or JobStatus.DRAFT.value)
+            except ValueError:
+                status = JobStatus.DRAFT
+            manifest = JobManifest(
+                job_id=job_id,
+                title=db_job.get("title") or "Sentient Comedy Short",
+                topic=db_job.get("topic") or "Sentient Everyday Objects Comedy",
+                visual_style=style,
+                status=status,
+            )
+            cls.save_manifest(manifest)
+            return manifest
         with open(manifest_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return JobManifest.model_validate(data)

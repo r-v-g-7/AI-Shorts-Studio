@@ -27,8 +27,8 @@ AWAITING_CLIPS_STATUSES = (
 )
 # Jobs untouched for longer than this are never chosen as the clip target (guards against stale projects).
 ACTIVE_JOB_WINDOW_HOURS = 24
-# Deduplication window (seconds): if two downloads appear within 5s with identical file sizes, discard the duplicate.
-DUPLICATE_SIZE_WINDOW_SECONDS = 5.0
+# Deduplication window (seconds): if two downloads appear within 10s with identical file sizes, discard the duplicate.
+DUPLICATE_SIZE_WINDOW_SECONDS = 10.0
 
 
 class DownloadsWatcher:
@@ -40,8 +40,8 @@ class DownloadsWatcher:
     storage/jobs/<active_job_id>/incoming_clips/, handed to SceneIntakeService, and once all 4
     scenes have valid clips, video stitching and ASS subtitle burning are triggered immediately.
 
-    Includes strict single-clip-per-scene deduplication: if two downloads appear within 5 seconds
-    with identical file sizes, the duplicate is discarded rather than mapped to the next scene index.
+    Includes strict single-clip-per-scene deduplication: tracks `current_scene_index` explicitly
+    and ignores any file arriving with identical byte size within 10 seconds of an existing scene.
     """
 
     _instance: Optional["DownloadsWatcher"] = None
@@ -62,6 +62,7 @@ class DownloadsWatcher:
         self.pinned_job_id = pinned_job_id
         self.auto_render = auto_render
         self.dedup_window_seconds = float(dedup_window_seconds)
+        self.current_scene_index: Optional[int] = 0           # explicit active scene index awaiting ingestion
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -245,6 +246,47 @@ class DownloadsWatcher:
                     continue
         return None
 
+    def sync_job_disk_state(self, job_id: str, reset_clips: bool = False) -> Dict[str, Any]:
+        """
+        Synchronizes in-memory watcher state, `current_scene_index`, and `manifest.json`
+        strictly with actual on-disk files in `incoming_clips/` and `scenes/`.
+        If `reset_clips=True`, clears existing scene clips so a fresh generation starts at Scene 1 (0/4).
+        """
+        incoming_dir = SceneIntakeService.get_incoming_directory(job_id)
+        scenes_dir = SceneIntakeService.get_scenes_directory(job_id)
+
+        if reset_clips:
+            for folder in (incoming_dir, scenes_dir):
+                if folder.exists():
+                    for f in folder.iterdir():
+                        if f.is_file() and f.suffix.lower() in WATCHED_EXTENSIONS:
+                            try:
+                                f.unlink()
+                            except OSError:
+                                pass
+            with self._lock:
+                self._recent_ingestions.clear()
+                self._render_requested.discard(job_id)
+                self.current_scene_index = 0
+
+        manifest = JobService.load_manifest(job_id)
+        scene_count = len(manifest.scenes) if (manifest and manifest.scenes) else 4
+        if manifest and manifest.scenes:
+            ingest = SceneIntakeService.scan_and_ingest(job_id)
+            missing = ingest.get("missing_scenes", [])
+            self.current_scene_index = missing[0] if missing else None
+            return ingest
+
+        existing, missing = SceneIntakeService.get_existing_and_missing_scenes(job_id, total_scenes=scene_count)
+        self.current_scene_index = missing[0] if missing else None
+        return {
+            "job_id": job_id,
+            "total_scenes": scene_count,
+            "assigned_scenes_count": len(existing),
+            "missing_scenes": missing,
+            "all_scenes_ready": len(missing) == 0,
+        }
+
     # ------------------------------------------------------------------ core
     def scan_once(self) -> List[Dict[str, Any]]:
         """Runs one scan pass. Returns the list of intake results (one per moved clip)."""
@@ -256,6 +298,14 @@ class DownloadsWatcher:
             self._baseline = self._snapshot()
         self._active_job_id = self.resolve_active_job()
         job_id = self._active_job_id
+
+        if job_id:
+            manifest = JobService.load_manifest(job_id)
+            if manifest and manifest.scenes:
+                _, missing_now = SceneIntakeService.get_existing_and_missing_scenes(
+                    job_id, total_scenes=len(manifest.scenes)
+                )
+                self.current_scene_index = missing_now[0] if missing_now else None
 
         for path in sorted(self.downloads_dir.iterdir()):
             if not path.is_file():
@@ -282,7 +332,7 @@ class DownloadsWatcher:
 
             incoming_dir = SceneIntakeService.get_incoming_directory(job_id)
 
-            # Requirement 4: Deduplicate downloads appearing within 5 seconds with identical file sizes
+            # Requirement 2: Deduplicate downloads appearing within 10 seconds with identical file sizes
             dup_reason = self._is_duplicate_download(path, st.st_size, job_id, incoming_dir)
             if dup_reason:
                 self._ignored.add(signature)
@@ -304,9 +354,10 @@ class DownloadsWatcher:
             existing_indices, missing_indices = SceneIntakeService.get_existing_and_missing_scenes(
                 job_id, total_scenes=scene_count
             )
+            self.current_scene_index = missing_indices[0] if missing_indices else None
 
             # Check if filename explicitly specifies a scene index (e.g. scene_02.mp4);
-            # otherwise automatically map ANY downloaded .mp4/.mov to the lowest missing scene index!
+            # otherwise map to `self.current_scene_index` (the lowest missing scene index).
             explicit_idx = SceneIntakeService.match_filename_to_scene_index(path.name, scene_count)
             if explicit_idx is not None:
                 # If this explicit scene already exists with the exact same byte size, discard as duplicate
@@ -325,8 +376,8 @@ class DownloadsWatcher:
                     )
                     continue
                 scene_idx = explicit_idx
-            elif missing_indices:
-                scene_idx = missing_indices[0]
+            elif self.current_scene_index is not None:
+                scene_idx = self.current_scene_index
             else:
                 self._ignored.add(signature)
                 self._record(
@@ -361,6 +412,8 @@ class DownloadsWatcher:
                     }
                 )
             ingest = SceneIntakeService.scan_and_ingest(job_id)
+            missing_after = ingest.get("missing_scenes", [])
+            self.current_scene_index = missing_after[0] if missing_after else None
             ready = ingest["assigned_scenes_count"]
             if not ingest["all_scenes_ready"]:
                 JobService.update_job_status(job_id, JobStatus.AWAITING_CLIPS)
@@ -395,14 +448,31 @@ class DownloadsWatcher:
 
     # ------------------------------------------------------------------ status for the UI
     def status(self) -> Dict[str, Any]:
-        job_id = self._active_job_id
+        job_id = self._active_job_id or self.resolve_active_job()
         title: Optional[str] = None
         clips: List[bool] = []
         if job_id:
             manifest = JobService.load_manifest(job_id)
-            if manifest:
+            if manifest and manifest.scenes:
                 title = manifest.title
-                clips = [bool(s.clip_file and Path(s.clip_file).exists()) for s in manifest.scenes]
+                existing_indices, missing_indices = SceneIntakeService.get_existing_and_missing_scenes(
+                    job_id, total_scenes=len(manifest.scenes)
+                )
+                existing_set = set(existing_indices)
+                clips = [i in existing_set for i in range(len(manifest.scenes))]
+                self.current_scene_index = missing_indices[0] if missing_indices else None
+                # Keep manifest.scenes[i].clip_file strictly synced with actual disk existence
+                dirty = False
+                scenes_dir = SceneIntakeService.get_scenes_directory(job_id)
+                for idx, sc in enumerate(manifest.scenes):
+                    expected_path = str(scenes_dir / f"scene_{idx + 1:02d}.mp4") if idx in existing_set else None
+                    if sc.clip_file != expected_path or sc.is_validated != (idx in existing_set):
+                        sc.clip_file = expected_path
+                        sc.is_validated = idx in existing_set
+                        dirty = True
+                if dirty:
+                    JobService.save_manifest(manifest)
+                    JobService.set_scenes(job_id, manifest.scenes)
         with self._lock:
             events = list(self._events)
         return {
@@ -411,6 +481,7 @@ class DownloadsWatcher:
             "downloads_dir": str(self.downloads_dir),
             "active_job_id": job_id,
             "active_job_title": title,
+            "current_scene_index": self.current_scene_index,
             "scene_clips": clips,
             "scenes_ready": sum(clips),
             "scenes_total": len(clips),
