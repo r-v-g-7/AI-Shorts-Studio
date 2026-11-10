@@ -180,13 +180,29 @@ class ScenePromptManager:
                 clothing="Immaculate bespoke white three-piece suit with gold buttons and silk pocket square",
                 distinctive_features="Golden lion fur, tailored white suit, luxury gold wristwatch"
             )
-        elif any(k in text_corpus for k in ["pressure cooker", "cooker", "chai", "patila", "kettle", "battery", "500", "paanch sau"]):
+        elif any(k in text_corpus for k in ["pressure cooker", "cooker", "prestige", "seeti", "safety valve", "chai", "patila", "kettle", "battery", "500", "paanch sau", "pankha", "chappal", "router"]):
+            if "cooker" in text_corpus or "prestige" in text_corpus or "seeti" in text_corpus:
+                char_name = "Battered Prestige Aluminum Pressure Cooker"
+                char_app = "Expressive Pixar-style 3D anthropomorphized Indian aluminum pressure cooker with bloodshot animated eyes, furrowed metallic eyebrows, dented body, and trembling steam whistle hat"
+                char_cloth = "Brushed aluminum body with rubber gasket rim, red safety valve on lid, and boiling yellow dal splatters"
+                char_feat = "Trembling steam whistle, glowing red safety valve, and dramatic comedic facial expressions"
+            elif "chai" in text_corpus or "patila" in text_corpus or "kettle" in text_corpus:
+                char_name = "Battered Indian Chai Patila"
+                char_app = "Expressive Pixar-style 3D anthropomorphized aluminum tea saucepan with big animated eyes, dented rim mouth, and bubbling masala chai crown"
+                char_cloth = "Flame-darkened aluminum base with frothy boiling brown tea and ginger-cardamom garnish"
+                char_feat = "Rising masala chai foam, steam puffs, and sarcastic eye rolls"
+            else:
+                char_name = "Sentient Indian Household Object"
+                char_app = "Expressive Pixar-style 3D anthropomorphized Indian household object with big animated eyes, expressive eyebrows, and tactile surface wear"
+                char_cloth = "Authentic metallic, glass, or crisp currency texture with dramatic rim lighting"
+                char_feat = "Animated expressive face, steam/spark reactions, and comedic body language"
+
             char_spec = CharacterReference(
-                name="Sentient Everyday Object Protagonist",
-                role="Comedic POV Narrator",
-                appearance="Expressive Pixar-style 3D anthropomorphized Indian household object with big animated eyes, expressive eyebrows, and tactile surface wear",
-                clothing="Authentic metallic, glass, or crisp currency texture with dramatic rim lighting",
-                distinctive_features="Animated expressive face, steam/spark reactions, and comedic body language"
+                name=char_name,
+                role="Sarcastic Comedic POV Narrator",
+                appearance=char_app,
+                clothing=char_cloth,
+                distinctive_features=char_feat
             )
         elif "mariana" in text_corpus or "abyssal" in text_corpus or "bioluminescent" in text_corpus:
             char_spec = CharacterReference(
@@ -271,14 +287,16 @@ class ScenePromptManager:
         negative_text = visual_reference.negative_instructions if visual_reference else profile["negative_prompt"]
 
         production_prompts: List[Dict[str, Any]] = []
+        beat_labels = ["Hook", "Escalation", "Boiling point", "Absurd punchline"]
 
         for scene in script.scenes:
             camera = scene.camera_movement or profile["camera_default"]
-            
+            beat_name = beat_labels[scene.index] if scene.index < len(beat_labels) else f"Beat {scene.index + 1}"
+
             # Formulate the Google Flow / Veo prompt
             full_prompt = (
                 f"9:16 vertical video. {profile['aesthetic']}. "
-                f"Scene: {scene.visual_description}. "
+                f"Beat {scene.index + 1} ({beat_name}): {scene.visual_description}. "
                 f"{char_anchor} "
                 f"{env_anchor} "
                 f"Cinematography: {camera}. "
@@ -288,6 +306,7 @@ class ScenePromptManager:
             prompt_entry = {
                 "scene_index": scene.index,
                 "scene_id": f"scene_{scene.index + 1:02d}",
+                "beat": beat_name,
                 "narration": scene.narration,
                 "duration_seconds": scene.estimated_duration_seconds,
                 "aspect_ratio": "9:16",

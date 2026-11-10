@@ -43,8 +43,8 @@ class Settings(BaseSettings):
     # TTS voice selection. Neural voices such as "hi-IN-MadhurNeural" (male) or
     # "hi-IN-SwaraNeural" (female) are routed to edge-tts; names like "af_bella" go to local Kokoro.
     DEFAULT_VOICE: str = "hi-IN-MadhurNeural"
-    TTS_DEFAULT_RATE: str = "-5%"
-    TTS_SPEED: float = 0.95
+    TTS_DEFAULT_RATE: str = "-6%"
+    TTS_SPEED: float = 0.94
     # If edge-tts is unreachable, fail loudly instead of silently reading Hindi with English phonemes.
     TTS_ALLOW_KOKORO_FALLBACK: bool = False
 
@@ -54,8 +54,8 @@ class Settings(BaseSettings):
     ELEVENLABS_API_KEY: str = ""
     ELEVENLABS_VOICE_ID: str = "pNInz6obpgDQGcFmaJgB"
     ELEVENLABS_MODEL_ID: str = "eleven_multilingual_v2"
-    ELEVENLABS_STABILITY: float = 0.45
-    ELEVENLABS_SIMILARITY_BOOST: float = 0.85
+    ELEVENLABS_STABILITY: float = 0.40
+    ELEVENLABS_SIMILARITY_BOOST: float = 0.88
 
     # Strict clip validation threshold (1 MB minimum per scene clip)
     MIN_CLIP_SIZE_BYTES: int = 1_000_000

@@ -196,8 +196,8 @@ class FlowAutomationService:
 
     async def _dismiss_popups_and_reset_focus(self, page):
         """
-        Requirement 1: Ensure no modal or flyout menu (such as 'View mode' Grid/Batch settings)
-        is active at the start of a scene interaction.
+        Requirement 1: Ensure no modal, flyout menu (such as 'View mode' Grid/Batch settings),
+        or open right-hand inspector detail panel blocks the bottom prompt bar.
         Sends Escape and waits 300ms for animations to settle.
         """
         try:
@@ -206,13 +206,47 @@ class FlowAutomationService:
         except Exception as e:
             logger.debug(f"[FlowCDP] Escape key press note: {e}")
 
+    async def _close_inspector_panel(self, page):
+        """
+        Explicitly closes the right-hand inspector detail panel after a scene download
+        so that:
+        1) The previous scene's inspector download button is no longer visible on-screen.
+        2) The bottom prompt input is unobstructed for Scene X+1.
+        """
+        try:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(300)
+            # If the inspector download button is still visible, press Escape once more or click close
+            dl_btn = await self._find_inspector_download_button(page)
+            if dl_btn is not None:
+                close_candidates = [
+                    page.locator('button[aria-label*="Close" i]').last,
+                    page.locator('button:has(mat-icon:has-text("close")), button:has-text("close")').last,
+                ]
+                closed = False
+                for close_btn in close_candidates:
+                    try:
+                        if await close_btn.count() > 0 and await close_btn.is_visible():
+                            await close_btn.click(timeout=1500)
+                            closed = True
+                            await page.wait_for_timeout(300)
+                            break
+                    except Exception:
+                        continue
+                if not closed:
+                    await page.keyboard.press("Escape")
+                    await page.wait_for_timeout(300)
+        except Exception as e:
+            logger.debug(f"[FlowCDP] Close inspector panel note: {e}")
+
     async def _find_prompt_locator(self, page):
         """
         Requirement 2: Locate the prompt input inside the bottom container using
         the multi-fallback selector hierarchy:
-        1. page.locator('[contenteditable="true"]').last
-        2. page.locator('textarea[placeholder*="What do you want to create" i], input[placeholder*="What do you want to create" i]')
-        3. page.locator('div:has-text("What do you want to create?")').last
+        1. page.locator('flow-prompt-box [contenteditable="true"]').last
+        2. page.locator('[contenteditable="true"]').last
+        3. page.locator('textarea[placeholder*="What do you want to create" i], input[placeholder*="What do you want to create" i]')
+        4. page.locator('div:has-text("What do you want to create?")').last
         """
         candidates = [
             page.locator('flow-prompt-box [contenteditable="true"]').last,
@@ -227,7 +261,7 @@ class FlowAutomationService:
         ]
 
         # Allow up to 3 seconds for Angular/ProseMirror layout to settle if tab just became active
-        for _ in range(6):
+        for attempt in range(6):
             for loc in candidates:
                 try:
                     if await loc.count() > 0 and await loc.is_visible():
@@ -236,18 +270,37 @@ class FlowAutomationService:
                             return loc
                 except Exception:
                     continue
+            if attempt == 2:
+                # Dismiss any lingering inspector overlay that might hide the bottom prompt bar
+                await self._close_inspector_panel(page)
             await page.wait_for_timeout(300)
         return None
 
+    async def _read_prompt_text(self, prompt_locator) -> str:
+        """Reads current text/value from either a contenteditable ProseMirror node or a textarea/input."""
+        try:
+            text = await prompt_locator.evaluate(
+                """(el) => {
+                    if (typeof el.value === 'string') return el.value;
+                    return el.innerText || el.textContent || '';
+                }"""
+            )
+            cleaned = (text or "").replace("\u200b", "").strip()
+            # Ignore placeholder text if the element reports its placeholder in innerText
+            if cleaned.lower() in ("what do you want to create?", "what would you like to create?"):
+                return ""
+            return cleaned
+        except Exception:
+            return ""
+
     async def focus_and_fill_prompt(self, page, prompt: str) -> bool:
         """
-        Requirement 1 & 2:
-        - Dismisses any open popup/flyout via Escape + 300ms wait.
-        - Targets the bottom prompt input.
-        - Clicks explicitly to focus the caret.
-        - Clears previous text safely (Control+A -> Backspace).
-        - Types the prompt using page.keyboard.type(prompt, delay=15) (with fill fallback)
-          so text is reliably inserted alongside any 'Agent' pill badge.
+        Strict Input Field Reset Before Typing Next Scene:
+        1. Dismisses any open popup/flyout/inspector panel via Escape + 300ms wait.
+        2. Focuses the Flow prompt textarea/ProseMirror element.
+        3. Presses Control+A then Backspace.
+        4. Checks input.innerText or value to verify it is 100% empty before typing Scene X+1 prompt.
+        5. Types the prompt using page.keyboard.type(prompt, delay=15) (with fill fallback).
         """
         await self._dismiss_popups_and_reset_focus(page)
 
@@ -262,23 +315,50 @@ class FlowAutomationService:
         await prompt_locator.click(timeout=5000)
         await page.wait_for_timeout(150)
 
-        # Clear any previous prompt text safely without removing external sibling pills
-        await page.keyboard.press("Control+A")
-        await page.wait_for_timeout(80)
-        await page.keyboard.press("Backspace")
-        await page.wait_for_timeout(100)
+        # Clear any previous prompt text safely (Control+A -> Backspace) and verify 100% empty
+        for clear_attempt in range(3):
+            await page.keyboard.press("Control+A")
+            await page.wait_for_timeout(80)
+            await page.keyboard.press("Backspace")
+            await page.wait_for_timeout(100)
+
+            residual = await self._read_prompt_text(prompt_locator)
+            if not residual:
+                break
+
+            logger.debug(
+                f"[FlowCDP] Prompt input still had {len(residual)} chars after Control+A/Backspace "
+                f"(attempt {clear_attempt + 1}); forcing DOM/keyboard clear."
+            )
+            try:
+                await prompt_locator.evaluate(
+                    """(el) => {
+                        if (typeof el.value === 'string') {
+                            el.value = '';
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                        } else if (el.isContentEditable) {
+                            el.innerHTML = '';
+                            el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+                        }
+                    }"""
+                )
+                await page.wait_for_timeout(100)
+            except Exception:
+                pass
+
+            if not await self._read_prompt_text(prompt_locator):
+                break
+
+        final_residual = await self._read_prompt_text(prompt_locator)
+        logger.info(f"[FlowCDP] Verified prompt input is 100% empty (residual_len={len(final_residual)}).")
 
         # Insert the prompt text via keyboard typing
+        await prompt_locator.click(timeout=3000)
         await page.keyboard.type(prompt, delay=15)
         await page.wait_for_timeout(200)
 
         # Verify text was entered; if still empty, fall back to locator.fill(prompt)
-        entered_text = ""
-        try:
-            entered_text = (await prompt_locator.inner_text() or "").strip()
-        except Exception:
-            pass
-
+        entered_text = await self._read_prompt_text(prompt_locator)
         if not entered_text:
             try:
                 await prompt_locator.fill(prompt)
@@ -287,6 +367,40 @@ class FlowAutomationService:
                 logger.debug(f"[FlowCDP] Fallback fill note: {fill_err}")
 
         return True
+
+    async def _verify_generation_started(self, page, prev_video_count: int) -> bool:
+        """
+        Verifies after submitting Scene X+1 prompt that the 'Thinking...' / generation loader starts
+        (or that the prompt box cleared / new card tile is being created).
+        """
+        for _ in range(10):
+            await page.wait_for_timeout(500)
+            try:
+                started = await page.evaluate(
+                    """(prevCount) => {
+                        const bodyText = (document.body.innerText || '').toLowerCase();
+                        const hasLoaderText = (
+                            bodyText.includes('thinking') ||
+                            bodyText.includes('generating') ||
+                            bodyText.includes('creating') ||
+                            bodyText.includes('queued') ||
+                            bodyText.includes('%')
+                        );
+                        const spinners = document.querySelectorAll(
+                            '[role="progressbar"], mat-progress-spinner, mat-spinner, [class*="loading" i], [class*="spinner" i]'
+                        ).length > 0;
+                        const videosNow = document.querySelectorAll('video').length;
+                        return hasLoaderText || spinners || videosNow > prevCount;
+                    }""",
+                    prev_video_count,
+                )
+                if started:
+                    logger.info("[FlowCDP] Verified Google Flow 'Thinking...' / generation loader is active.")
+                    return True
+            except Exception:
+                pass
+        logger.debug("[FlowCDP] Generation loader check completed (continuing to video completion poll).")
+        return False
 
     async def _ensure_portrait_aspect_ratio(self, page):
         """
@@ -469,20 +583,30 @@ class FlowAutomationService:
     ) -> Path:
         """
         Automates generating and downloading a single scene in Google Flow:
-        1. Dismisses any open popup/flyout ('View mode') via Escape + 300ms settle.
+        1. Dismisses any open popup/flyout ('View mode') or previous inspector panel via Escape + 300ms settle.
         2. Focuses the bottom prompt box ('What do you want to create?'), clears via
-           Control+A + Backspace, and types the visual prompt via keyboard.type(delay=15).
+           Control+A + Backspace, verifies 100% empty, and types the visual prompt via keyboard.type(delay=15).
         3. Checks aspect ratio safely (never clicking top toolbar icons).
-        4. Submits the prompt via the bottom-bar right-arrow button or Enter.
-        5. Waits up to 180s for video generation completion and clicks the right-hand
-           detail panel download button as soon as generation finishes.
+        4. Submits the prompt via the bottom-bar right-arrow button or Enter and verifies generation starts.
+        5. Single-fire download debounce: waits for NEW video completion, triggers the inspector download
+           button (`⤓`) EXACTLY ONCE inside `async with page.expect_download(timeout=45000)`, saves
+           directly to `incoming_clips/scene_0X.mp4`, and sleeps 3 seconds post-download so Flow UI events settle.
         """
         if self._page is None:
             await self.connect_to_browser()
 
         page = self._page
         scene_num = scene_index + 1
-        target_download_file = self.downloads_dir / f"scene_{scene_num:02d}.mp4"
+
+        # Determine direct incoming_clips/scene_0X.mp4 path if job_id is present
+        incoming_clip_path: Optional[Path] = None
+        if job_id:
+            incoming_dir = settings.JOBS_STORAGE_DIR / job_id / "incoming_clips"
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+            incoming_clip_path = incoming_dir / f"scene_{scene_num:02d}.mp4"
+
+        target_download_file = incoming_clip_path or output_path or (self.downloads_dir / f"scene_{scene_num:02d}.mp4")
+        target_download_file.parent.mkdir(parents=True, exist_ok=True)
 
         if job_id:
             JobRepository.add_log(
@@ -491,6 +615,9 @@ class FlowAutomationService:
                 "FLOW_AUTOMATION",
                 f"GENERATING_FLOW_VISUALS (Scene {scene_num}/4): Submitting prompt to Google Flow..."
             )
+
+        # Ensure any previous scene's right-hand inspector detail panel is closed BEFORE snapshotting
+        await self._close_inspector_panel(page)
 
         # Snapshot current video elements and Downloads folder state before submitting
         prev_video_count = await page.locator("video").count()
@@ -504,37 +631,39 @@ class FlowAutomationService:
         downloads_baseline = await self._snapshot_existing_downloads()
         submit_timestamp = time.time()
 
-        # Requirement 1 & 2: Dismiss popups, focus bottom prompt input, clear & type prompt
+        # Requirement 1 & 2: Dismiss popups, focus bottom prompt input, strict clear & empty-check, type prompt
         await self.focus_and_fill_prompt(page, prompt)
 
         # Requirement 3: Aspect ratio check (bottom bar only, never top toolbar)
         await self._ensure_portrait_aspect_ratio(page)
 
-        # Requirement 4: Submit prompt
+        # Requirement 4: Submit prompt & verify "Thinking..." / generation loader starts
         await self._submit_prompt(page)
+        await self._verify_generation_started(page, prev_video_count)
         logger.info(
             f"[FlowCDP] Scene {scene_num} prompt submitted. "
-            f"Waiting up to {self.scene_timeout_seconds}s for Flow generation & inspector download button..."
+            f"Waiting up to {self.scene_timeout_seconds}s for Flow generation & single-fire inspector download..."
         )
 
-        # Requirement 5: Download trigger & polling (up to 180s)
+        # Requirement 5: Single-Fire Download Debounce & polling (up to 180s)
         start_ts = time.time()
         downloaded_path: Optional[Path] = None
         clicked_video_to_open_inspector = False
+        download_triggered = False
 
         while time.time() - start_ts < self.scene_timeout_seconds:
             await page.wait_for_timeout(2500)
 
-            # A. Check if a file already landed in Downloads directory
+            # A. Check if a new file already landed in Downloads directory
             new_dl = self._find_new_download_in_dir(downloads_baseline, submit_timestamp)
             if new_dl and new_dl.exists() and new_dl.stat().st_size > 1000:
                 if new_dl.resolve() != target_download_file.resolve():
-                    shutil.copy2(str(new_dl), str(target_download_file))
+                    shutil.move(str(new_dl), str(target_download_file))
                 downloaded_path = target_download_file
-                logger.info(f"[FlowCDP] Detected downloaded file in Downloads folder -> {target_download_file}")
+                logger.info(f"[FlowCDP] Moved new download from Downloads folder -> {target_download_file}")
                 break
 
-            # B. Check if generation has completed (new <video> ready or inspector download button active)
+            # B. Check if generation has completed (strictly require a NEW <video> element or NEW <video src>)
             curr_video_count = await page.locator("video").count()
             curr_video_srcs = await page.evaluate(
                 """() => Array.from(document.querySelectorAll('video'))
@@ -544,11 +673,14 @@ class FlowAutomationService:
             new_srcs = [s for s in curr_video_srcs if s not in prev_video_srcs]
             video_finished = curr_video_count > prev_video_count or len(new_srcs) > 0
 
-            # Also check if the inspector download button appeared directly after submission
-            dl_btn = await self._find_inspector_download_button(page) if (video_finished or (time.time() - start_ts > 8)) else None
+            if not video_finished:
+                continue
 
-            if video_finished and dl_btn is None and not clicked_video_to_open_inspector:
-                # Click the completed video tile once to open the right-hand detail inspector panel
+            # Only look for the inspector download button AFTER the new video has finished generating
+            dl_btn = await self._find_inspector_download_button(page)
+
+            if dl_btn is None and not clicked_video_to_open_inspector:
+                # Click the newly completed video tile once to open the right-hand detail inspector panel
                 try:
                     newest_video = page.locator("video").first
                     if await newest_video.is_visible():
@@ -559,15 +691,30 @@ class FlowAutomationService:
                 except Exception:
                     pass
 
-            if dl_btn is not None:
-                logger.info(f"[FlowCDP] Located completed video download button in inspector panel for Scene {scene_num}. Clicking now...")
+            # Single-Fire Download Debounce: click inspector download button (`⤓`) EXACTLY ONCE
+            if dl_btn is not None and not download_triggered:
+                download_triggered = True
+                logger.info(
+                    f"[FlowCDP] Located completed video download button (`⤓`) in inspector panel "
+                    f"for Scene {scene_num}. Clicking EXACTLY ONCE..."
+                )
                 try:
-                    async with page.expect_download(timeout=20000) as download_info:
+                    async with page.expect_download(timeout=45000) as download_info:
                         await dl_btn.click(timeout=4000)
                     download = await download_info.value
                     await download.save_as(str(target_download_file))
                     downloaded_path = target_download_file
-                    logger.info(f"[FlowCDP] Downloaded Scene {scene_num} via inspector download button -> {target_download_file}")
+                    logger.info(
+                        f"[FlowCDP] Downloaded Scene {scene_num} via single-fire inspector button -> {target_download_file}"
+                    )
+                    # Clean up any duplicate copy Chrome may have simultaneously dropped into Downloads/
+                    extra_dl = self._find_new_download_in_dir(downloads_baseline, submit_timestamp)
+                    if extra_dl and extra_dl.exists() and extra_dl.resolve() != target_download_file.resolve():
+                        try:
+                            extra_dl.unlink()
+                            logger.info(f"[FlowCDP] Removed duplicate raw browser download '{extra_dl.name}' from Downloads/.")
+                        except OSError:
+                            pass
                     break
                 except Exception as dl_err:
                     logger.debug(f"[FlowCDP] Inspector download click note (checking Downloads dir next): {dl_err}")
@@ -575,13 +722,13 @@ class FlowAutomationService:
                     new_dl = self._find_new_download_in_dir(downloads_baseline, submit_timestamp)
                     if new_dl and new_dl.exists() and new_dl.stat().st_size > 1000:
                         if new_dl.resolve() != target_download_file.resolve():
-                            shutil.copy2(str(new_dl), str(target_download_file))
+                            shutil.move(str(new_dl), str(target_download_file))
                         downloaded_path = target_download_file
                         logger.info(f"[FlowCDP] Captured Scene {scene_num} from Downloads dir after inspector click -> {target_download_file}")
                         break
 
-            if video_finished:
-                # Direct <video src> stream fallback if download button used blob/direct URL
+            # Direct <video src> stream fallback if download button used blob/direct URL
+            if not downloaded_path:
                 target_src = new_srcs[0] if new_srcs else (curr_video_srcs[0] if curr_video_srcs else None)
                 if target_src and target_src.startswith("http"):
                     try:
@@ -601,12 +748,32 @@ class FlowAutomationService:
                 f"Google Flow scene {scene_num} generation timed out after {self.scene_timeout_seconds}s on {page.url}."
             )
 
+        # Register this direct scene download with DownloadsWatcher so any delayed duplicate is deduplicated
+        try:
+            from backend.services.downloads_watcher import DownloadsWatcher
+            DownloadsWatcher.get_instance().register_direct_scene_download(
+                job_id=job_id,
+                scene_index=scene_index,
+                file_size=downloaded_path.stat().st_size,
+                target_path=downloaded_path,
+            )
+        except Exception as reg_err:
+            logger.debug(f"[FlowCDP] DownloadsWatcher registration note: {reg_err}")
+
+        # Ensure both incoming_clips/scene_0X.mp4 and output_path (scenes/scene_0X.mp4) have the clip
+        if incoming_clip_path and incoming_clip_path.resolve() != downloaded_path.resolve():
+            incoming_clip_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(downloaded_path), str(incoming_clip_path))
+
         if output_path and output_path.resolve() != downloaded_path.resolve():
             output_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(downloaded_path), str(output_path))
-            return output_path
 
-        return downloaded_path
+        # Sleep for 3 seconds post-download so Flow UI events settle and close the right-hand inspector panel
+        await page.wait_for_timeout(3000)
+        await self._close_inspector_panel(page)
+
+        return output_path if (output_path and output_path.exists()) else downloaded_path
 
     async def generate_all_scenes(
         self,

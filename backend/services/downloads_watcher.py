@@ -27,6 +27,8 @@ AWAITING_CLIPS_STATUSES = (
 )
 # Jobs untouched for longer than this are never chosen as the clip target (guards against stale projects).
 ACTIVE_JOB_WINDOW_HOURS = 24
+# Deduplication window (seconds): if two downloads appear within 5s with identical file sizes, discard the duplicate.
+DUPLICATE_SIZE_WINDOW_SECONDS = 5.0
 
 
 class DownloadsWatcher:
@@ -37,6 +39,9 @@ class DownloadsWatcher:
     (scene_01.mp4 -> scene_02.mp4 -> scene_03.mp4 -> scene_04.mp4) based on disk existence in
     storage/jobs/<active_job_id>/incoming_clips/, handed to SceneIntakeService, and once all 4
     scenes have valid clips, video stitching and ASS subtitle burning are triggered immediately.
+
+    Includes strict single-clip-per-scene deduplication: if two downloads appear within 5 seconds
+    with identical file sizes, the duplicate is discarded rather than mapped to the next scene index.
     """
 
     _instance: Optional["DownloadsWatcher"] = None
@@ -49,12 +54,14 @@ class DownloadsWatcher:
         stable_seconds: Optional[float] = None,
         pinned_job_id: Optional[str] = None,
         auto_render: bool = True,
+        dedup_window_seconds: float = DUPLICATE_SIZE_WINDOW_SECONDS,
     ):
         self.downloads_dir = Path(downloads_dir or settings.DOWNLOADS_DIR)
         self.poll_seconds = float(poll_seconds if poll_seconds is not None else settings.DOWNLOADS_POLL_SECONDS)
         self.stable_seconds = float(stable_seconds if stable_seconds is not None else settings.DOWNLOADS_STABLE_SECONDS)
         self.pinned_job_id = pinned_job_id
         self.auto_render = auto_render
+        self.dedup_window_seconds = float(dedup_window_seconds)
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -62,6 +69,7 @@ class DownloadsWatcher:
         self._baseline: Optional[set] = None                  # files that existed when the watcher started
         self._observed: Dict[str, Tuple[int, float]] = {}   # path -> (size, first time this size was seen)
         self._ignored: set = set()                            # (path, size, mtime) signatures we never retry
+        self._recent_ingestions: Deque[Dict[str, Any]] = deque(maxlen=32)  # {size, timestamp, scene_index, job_id, name}
         self._render_requested: set = set()
         self._active_job_id: Optional[str] = pinned_job_id
         self._events: Deque[Dict[str, Any]] = deque(maxlen=25)
@@ -180,6 +188,63 @@ class DownloadsWatcher:
                 archive.mkdir(exist_ok=True)
                 shutil.move(str(old), str(archive / f"{old.stem}_{int(time.time())}{old.suffix}"))
 
+    def register_direct_scene_download(
+        self,
+        job_id: Optional[str],
+        scene_index: int,
+        file_size: int,
+        target_path: Optional[Path] = None,
+    ) -> None:
+        """
+        Called by FlowAutomationService when a scene is downloaded directly into incoming_clips/scene_0X.mp4
+        so that if Chrome simultaneously drops an identical-size duplicate into Downloads/ within 5s,
+        DownloadsWatcher recognizes and discards the duplicate instead of mapping it to Scene X+1.
+        """
+        with self._lock:
+            self._recent_ingestions.append(
+                {
+                    "job_id": job_id,
+                    "scene_index": scene_index,
+                    "size": int(file_size),
+                    "timestamp": time.time(),
+                    "name": target_path.name if target_path else f"scene_{scene_index + 1:02d}.mp4",
+                }
+            )
+
+    def _is_duplicate_download(self, path: Path, file_size: int, job_id: str, incoming_dir: Path) -> Optional[str]:
+        """
+        Requirement 4: Ensure the watcher ingests at most one file per active scene.
+        If two downloads appear within 5 seconds (`self.dedup_window_seconds`) with identical file sizes,
+        discard the duplicate rather than mapping it to the next scene index.
+        Returns a human-readable reason if `path` is a duplicate, else None.
+        """
+        now = time.time()
+        with self._lock:
+            for prev in reversed(self._recent_ingestions):
+                age = now - float(prev.get("timestamp", 0.0))
+                if age <= self.dedup_window_seconds and int(prev.get("size", -1)) == int(file_size):
+                    return (
+                        f"identical size ({file_size} bytes) to '{prev.get('name')}' "
+                        f"ingested {age:.2f}s ago (<= {self.dedup_window_seconds:.0f}s window)"
+                    )
+
+        # Also check existing scene clips in incoming_clips/ modified within the deduplication window
+        if incoming_dir.exists():
+            for existing in incoming_dir.iterdir():
+                if not existing.is_file() or existing.suffix.lower() not in WATCHED_EXTENSIONS:
+                    continue
+                try:
+                    est = existing.stat()
+                    age = abs(now - est.st_mtime)
+                    if est.st_size == file_size and age <= max(self.dedup_window_seconds, 15.0):
+                        return (
+                            f"identical size ({file_size} bytes) to existing '{existing.name}' "
+                            f"in incoming_clips/ (age={age:.2f}s)"
+                        )
+                except OSError:
+                    continue
+        return None
+
     # ------------------------------------------------------------------ core
     def scan_once(self) -> List[Dict[str, Any]]:
         """Runs one scan pass. Returns the list of intake results (one per moved clip)."""
@@ -215,6 +280,26 @@ class DownloadsWatcher:
             if scene_count == 0:
                 continue
 
+            incoming_dir = SceneIntakeService.get_incoming_directory(job_id)
+
+            # Requirement 4: Deduplicate downloads appearing within 5 seconds with identical file sizes
+            dup_reason = self._is_duplicate_download(path, st.st_size, job_id, incoming_dir)
+            if dup_reason:
+                self._ignored.add(signature)
+                self._observed.pop(str(path), None)
+                try:
+                    dup_archive = incoming_dir / "_duplicates"
+                    dup_archive.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(path), str(dup_archive / f"{path.stem}_dup_{int(time.time())}{path.suffix}"))
+                except OSError:
+                    pass
+                self._record(
+                    "INFO",
+                    f"Discarded duplicate download '{path.name}': {dup_reason}.",
+                    job_id,
+                )
+                continue
+
             # Inspect existing clips in incoming_clips/ to find missing scene indices (0..scene_count-1)
             existing_indices, missing_indices = SceneIntakeService.get_existing_and_missing_scenes(
                 job_id, total_scenes=scene_count
@@ -224,6 +309,21 @@ class DownloadsWatcher:
             # otherwise automatically map ANY downloaded .mp4/.mov to the lowest missing scene index!
             explicit_idx = SceneIntakeService.match_filename_to_scene_index(path.name, scene_count)
             if explicit_idx is not None:
+                # If this explicit scene already exists with the exact same byte size, discard as duplicate
+                existing_target = incoming_dir / f"scene_{explicit_idx + 1:02d}.mp4"
+                if existing_target.exists() and existing_target.stat().st_size == st.st_size:
+                    self._ignored.add(signature)
+                    self._observed.pop(str(path), None)
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+                    self._record(
+                        "INFO",
+                        f"Discarded duplicate explicit clip '{path.name}' (Scene {explicit_idx + 1} already ingested with {st.st_size} bytes).",
+                        job_id,
+                    )
+                    continue
                 scene_idx = explicit_idx
             elif missing_indices:
                 scene_idx = missing_indices[0]
@@ -236,7 +336,6 @@ class DownloadsWatcher:
                 )
                 continue
 
-            incoming_dir = SceneIntakeService.get_incoming_directory(job_id)
             target = incoming_dir / f"scene_{scene_idx + 1:02d}.mp4"
             try:
                 self._archive_existing(incoming_dir, scene_idx, keep=target)
@@ -251,6 +350,16 @@ class DownloadsWatcher:
                 continue
 
             self._observed.pop(str(path), None)
+            with self._lock:
+                self._recent_ingestions.append(
+                    {
+                        "job_id": job_id,
+                        "scene_index": scene_idx,
+                        "size": st.st_size,
+                        "timestamp": time.time(),
+                        "name": target.name,
+                    }
+                )
             ingest = SceneIntakeService.scan_and_ingest(job_id)
             ready = ingest["assigned_scenes_count"]
             if not ingest["all_scenes_ready"]:

@@ -28,12 +28,12 @@ _TICKS_PER_SECOND = 10_000_000  # edge-tts offsets/durations are in 100-nanoseco
 
 # Default comedic SSML break durations (seconds)
 SSML_BREAK_DURATIONS = {
-    "...": 0.450,  # <break time="450ms"/>
-    "…": 0.450,    # <break time="450ms"/>
-    "!": 0.350,    # <break time="350ms"/> + elevated prosody
-    "?": 0.350,    # <break time="350ms"/> + elevated prosody
+    "...": 0.500,  # <break time="500ms"/>
+    "…": 0.500,    # <break time="500ms"/>
+    "!": 0.400,    # <break time="400ms"/> + <prosody rate="-3%" pitch="+4Hz">
+    "?": 0.350,    # <break time="350ms"/> + rising pitch
     ":": 0.250,    # <break time="250ms"/>
-    ",": 0.200,    # <break time="200ms"/>
+    ",": 0.250,    # <break time="250ms"/>
 }
 
 
@@ -57,16 +57,16 @@ class AudioService:
     # SSML Formatting & Comedic Pauses / Prosody Engine
     # ------------------------------------------------------------------
     @classmethod
-    def format_comedic_ssml(cls, text: str, voice: Optional[str] = None, rate: str = "-5%") -> str:
+    def format_comedic_ssml(cls, text: str, voice: Optional[str] = None, rate: str = "-6%") -> str:
         """
         Converts narrative text and punctuation (!, ?, ..., :, ,) into natural SSML with
         comedic breaks and elevated prosody on exclamations:
-          - Ellipsis (`...`) -> `<break time="450ms"/>`
-          - Exclamation (`!`) -> `<break time="350ms"/>` with slightly elevated prosody
-          - Question (`?`) -> `<break time="350ms"/>` with elevated pitch prosody
+          - Ellipsis (`...`) -> `<break time="500ms"/>`
+          - Exclamation (`!`) -> `<break time="400ms"/>` with `<prosody rate="-3%" pitch="+4Hz">`
+          - Question (`?`) -> `<break time="350ms"/>` with rising pitch `<prosody rate="-4%" pitch="+6Hz">`
           - Colon (`:`) -> `<break time="250ms"/>`
-          - Comma (`,`) -> `<break time="200ms"/>`
-          - Default speech rate: `-5%`
+          - Comma (`,`) -> `<break time="250ms"/>`
+          - Overall baseline speed: `-6%`
         """
         selected_voice = voice or settings.DEFAULT_VOICE
         raw = cls.strip_ssml_tags(text).strip()
@@ -84,28 +84,28 @@ class AudioService:
             if not clause and not punct:
                 continue
 
-            # Replace internal commas and colons with SSML breaks
-            clause_ssml = re.sub(r"\.\.\.|…", '... <break time="450ms"/>', clause)
-            clause_ssml = re.sub(r",", ', <break time="200ms"/>', clause_ssml)
+            # Replace internal ellipses, commas, and colons with SSML breaks
+            clause_ssml = re.sub(r"\.\.\.|…", '... <break time="500ms"/>', clause)
+            clause_ssml = re.sub(r",", ', <break time="250ms"/>', clause_ssml)
             clause_ssml = re.sub(r":", ': <break time="250ms"/>', clause_ssml)
 
             if "!" in punct:
-                # Exclamation -> slightly elevated prosody + 350ms comedic pause
+                # Exclamation -> prosody contour <prosody rate="-3%" pitch="+4Hz"> + 400ms comedic pause
                 ssml_clauses.append(
-                    f'<prosody pitch="+4Hz" rate="-2%" volume="+6%">{clause_ssml}!</prosody>'
-                    f'<break time="350ms"/>'
+                    f'<prosody rate="-3%" pitch="+4Hz">{clause_ssml}!</prosody>'
+                    f'<break time="400ms"/>'
                 )
             elif "?" in punct:
-                # Question -> inquisitive elevated pitch + 350ms pause
+                # Question -> rising pitch contour + 350ms pause
                 ssml_clauses.append(
-                    f'<prosody pitch="+5Hz" rate="-3%">{clause_ssml}?</prosody>'
+                    f'<prosody rate="-4%" pitch="+6Hz">{clause_ssml}?</prosody>'
                     f'<break time="350ms"/>'
                 )
             elif "..." in punct or "…" in punct:
-                # Ellipsis -> dramatic comedic suspense pause 450ms
-                ssml_clauses.append(f'{clause_ssml}... <break time="450ms"/>')
+                # Ellipsis -> dramatic comedic suspense pause 500ms
+                ssml_clauses.append(f'{clause_ssml}... <break time="500ms"/>')
             elif "." in punct:
-                ssml_clauses.append(f'{clause_ssml}. <break time="250ms"/>')
+                ssml_clauses.append(f'{clause_ssml}. <break time="280ms"/>')
             else:
                 ssml_clauses.append(clause_ssml)
 
@@ -253,8 +253,8 @@ class AudioService:
             else getattr(settings, "ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")
         )
         model_id = getattr(settings, "ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
-        stability = float(getattr(settings, "ELEVENLABS_STABILITY", 0.45))
-        similarity_boost = float(getattr(settings, "ELEVENLABS_SIMILARITY_BOOST", 0.85))
+        stability = float(getattr(settings, "ELEVENLABS_STABILITY", 0.40))
+        similarity_boost = float(getattr(settings, "ELEVENLABS_SIMILARITY_BOOST", 0.88))
 
         payload = json.dumps({
             "text": clean_text,
@@ -479,25 +479,34 @@ class AudioService:
         return samples, sample_rate, word_timestamps, "kokoro-phoneme-timing"
 
     # ------------------------------------------------------------------
-    # edge-tts (Microsoft neural voices, native Hindi, SSML breaks & -5% rate)
+    # edge-tts (Microsoft neural voices, native Hindi, SSML breaks & -6% rate)
     # ------------------------------------------------------------------
     @staticmethod
     def _speed_to_rate(speed: Optional[float] = None) -> str:
         """
         Converts numeric speed to edge-tts rate string.
-        Defaults to '-5%' (slightly deliberate and punchy for comedy) when speed is None, 1.0, or 0.95.
+        Defaults to '-6%' (deliberate, humanized comedic cadence) when speed is None, 1.0, 0.95, or 0.94.
         """
-        if speed is None or abs(float(speed) - 1.0) < 1e-3 or abs(float(speed) - 0.95) < 1e-3:
-            return getattr(settings, "TTS_DEFAULT_RATE", "-5%") or "-5%"
+        if speed is None or abs(float(speed) - 1.0) < 1e-3 or abs(float(speed) - 0.95) < 1e-3 or abs(float(speed) - 0.94) < 1e-3:
+            return getattr(settings, "TTS_DEFAULT_RATE", "-6%") or "-6%"
         pct = int(round((float(speed) - 1.0) * 100))
         return f"{pct:+d}%"
 
     @staticmethod
-    async def _edge_stream(text: str, voice: str, rate: str, mp3_path: Path) -> List[Dict[str, Any]]:
+    async def _edge_stream(
+        text: str,
+        voice: str,
+        rate: str,
+        mp3_path: Path,
+        pitch: str = "+0Hz",
+        volume: str = "+0%",
+    ) -> List[Dict[str, Any]]:
         import edge_tts
 
         # edge-tts >= 7 defaults to SentenceBoundary; word-level timing must be requested explicitly.
-        communicate = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
+        communicate = edge_tts.Communicate(
+            text, voice, rate=rate, pitch=pitch, volume=volume, boundary="WordBoundary"
+        )
         events: List[Dict[str, Any]] = []
         audio_bytes = 0
         with open(mp3_path, "wb") as f:
@@ -512,13 +521,23 @@ class AudioService:
         return events
 
     @classmethod
-    def _edge_stream_blocking(cls, text: str, voice: str, rate: str, mp3_path: Path) -> List[Dict[str, Any]]:
+    def _edge_stream_blocking(
+        cls,
+        text: str,
+        voice: str,
+        rate: str,
+        mp3_path: Path,
+        pitch: str = "+0Hz",
+        volume: str = "+0%",
+    ) -> List[Dict[str, Any]]:
         """Runs the async edge-tts stream on a private event loop (safe from any calling thread)."""
         last_err: Optional[Exception] = None
         for attempt in range(1, 4):
             try:
                 with ThreadPoolExecutor(max_workers=1) as ex:
-                    return ex.submit(asyncio.run, cls._edge_stream(text, voice, rate, mp3_path)).result()
+                    return ex.submit(
+                        asyncio.run, cls._edge_stream(text, voice, rate, mp3_path, pitch=pitch, volume=volume)
+                    ).result()
             except Exception as e:  # network hiccups, throttling, websocket drops
                 last_err = e
                 logger.warning(f"edge-tts attempt {attempt}/3 failed: {e}")
@@ -606,6 +625,63 @@ class AudioService:
         clean_text = cls.strip_ssml_tags(text)
         ssml_markup = cls.format_comedic_ssml(clean_text, voice=voice, rate=rate)
 
+        # Split into sentence clauses to apply authentic neural pitch/rate prosody contours
+        raw_parts = re.split(r"([!?.]+)", clean_text)
+        clauses: List[Tuple[str, str, str, str]] = []  # (clause_text_with_punct, rate, pitch, volume)
+        idx = 0
+        while idx < len(raw_parts):
+            seg = raw_parts[idx].strip()
+            punct = raw_parts[idx + 1] if (idx + 1) < len(raw_parts) else ""
+            idx += 2
+            if not seg:
+                continue
+            full_clause = f"{seg}{punct}".strip()
+            if "!" in punct:
+                clauses.append((full_clause, "-3%", "+4Hz", "+6%"))
+            elif "?" in punct:
+                clauses.append((full_clause, "-4%", "+6Hz", "+4%"))
+            else:
+                clauses.append((full_clause, rate, "+0Hz", "+0%"))
+
+        if len(clauses) > 1 and len(clauses) <= 12:
+            try:
+                all_samples: List[np.ndarray] = []
+                all_timestamps: List[WordTimestamp] = []
+                sample_rate = 24000
+                time_offset = 0.0
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    for c_idx, (c_text, c_rate, c_pitch, c_vol) in enumerate(clauses):
+                        mp3_p = Path(tmp) / f"clause_{c_idx}.mp3"
+                        wav_p = Path(tmp) / f"clause_{c_idx}.wav"
+                        ev = cls._edge_stream_blocking(
+                            c_text, voice, c_rate, mp3_p, pitch=c_pitch, volume=c_vol
+                        )
+                        cls._mp3_to_wav(mp3_p, wav_p, sample_rate=sample_rate)
+                        c_samples, sample_rate = sf.read(str(wav_p), dtype="float32")
+                        c_dur = float(len(c_samples)) / float(sample_rate)
+                        c_ts, _ = cls._events_to_word_timestamps(c_text, ev, c_dur)
+
+                        # Apply internal comma/ellipsis pauses (250ms / 500ms) within the clause
+                        c_samples, c_ts = cls._apply_ssml_breaks_and_prosody(c_samples, sample_rate, c_ts)
+                        c_dur = float(len(c_samples)) / float(sample_rate)
+
+                        for wt in c_ts:
+                            all_timestamps.append(
+                                WordTimestamp(
+                                    word=wt.word,
+                                    start_time=round(wt.start_time + time_offset, 3),
+                                    end_time=round(wt.end_time + time_offset, 3),
+                                )
+                            )
+                        all_samples.append(c_samples)
+                        time_offset += c_dur
+
+                merged_samples = np.concatenate(all_samples) if all_samples else np.zeros(2400, dtype=np.float32)
+                return merged_samples, sample_rate, all_timestamps, "edge-tts-ssml-prosody-clauses", ssml_markup
+            except Exception as clause_err:
+                logger.warning(f"Clause-level prosody synthesis fallback to unified stream ({clause_err})")
+
         with tempfile.TemporaryDirectory() as tmp:
             mp3_path = Path(tmp) / "edge.mp3"
             wav_tmp = Path(tmp) / "edge.wav"
@@ -616,7 +692,7 @@ class AudioService:
         raw_duration = float(len(samples)) / float(sample_rate)
         raw_timestamps, source = cls._events_to_word_timestamps(clean_text, events, raw_duration)
 
-        # Apply SSML comedic pauses (... -> 450ms, ! -> 350ms + prosody, , -> 200ms) and sync timestamps
+        # Apply SSML comedic pauses (... -> 500ms, ! -> 400ms + prosody, ? -> 350ms, , -> 250ms) and sync timestamps
         samples, timestamps = cls._apply_ssml_breaks_and_prosody(samples, sample_rate, raw_timestamps)
         return samples, sample_rate, timestamps, source, ssml_markup
 

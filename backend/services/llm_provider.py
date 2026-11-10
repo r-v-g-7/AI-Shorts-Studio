@@ -68,14 +68,21 @@ def is_hinglish(language: Optional[str]) -> bool:
 
 
 HINGLISH_DIRECTIVE = """
-NARRATION LANGUAGE = ROMAN HINGLISH (MANDATORY):
-- Write EVERY "narration" field and "hook" and "complete_narration" in natural, conversational Hindi using ONLY the Latin alphabet (Roman script), exactly as a storyteller would speak it. Example: "Ek akeli bacchi har raat chhat par baithkar chaand se baatein karti thi..."
-- NEVER use Devanagari script. NEVER write the narration as an English translation.
-- Use English only for common loanwords people really say in Hindi (e.g. supercar, drone, crane, watch, tower, police, suit). Prefer Hindi words otherwise (shehar, baadal, chaand, papa, bacchi, raftaar, intezaar).
-- Keep spelling simple and consistent so a Hindi text-to-speech voice reads it correctly (e.g. "chaand", "baatein", "nikaalte").
-- If the user supplied dialogue or punchlines, keep them VERBATIM, character for character.
-- "visual_description" and "camera_movement" MUST stay in English (they are prompts for a video-generation model).
-- Hindi speech runs about 2.5 to 3 words per second: roughly 70 to 85 narrated words for 30 seconds.
+NARRATION LANGUAGE = 100% CONVERSATIONAL DELHI/UP HOUSEHOLD HINDI IN ROMAN SCRIPT (MANDATORY):
+- Write EVERY "narration" field, "hook", and "complete_narration" in 100% natural, expressive, sarcastic everyday Delhi/UP household Hindi written in Roman script (Hinglish) so neural Hindi TTS pronounces every word accurately.
+- TONE & IDIOMS: Use authentic spoken expressions like "Arre yaar...", "Kasam se keh raha hoon...", "Bhai sahab...", "Abhi safety valve udha doonga!", "Dimag ka dahi kar rakha hai!".
+- ZERO ENGLISH SENTENCES & ZERO TEXTBOOK HINDI: NEVER output English sentences or formal/academic textbook Hindi (no "Kya aap jaante hain", no "Did you know"). Speak like a real Indian stand-up comic or household character talking directly to the viewer!
+- ORAL STAND-UP CADENCE & PUNCTUATION: Write short, punchy sentences with deliberate comedic punctuation:
+  * Use ellipses (`...`) before punchlines for 500ms suspense pauses.
+  * Use exclamation marks (`!`) on high-energy punchlines and outbursts.
+  * Use question marks (`?`) on sarcastic rhetorical questions.
+  * Use commas (`,`) for natural breathing room between clauses.
+- Keep "visual_description" and "camera_movement" in detailed English (they are prompts for the video-generation model).
+- Keep scenes strictly divided into 4 escalating beats:
+  * Scene 1: Explosive relatable Hook
+  * Scene 2: Daily torture / Escalation
+  * Scene 3: Boiling point / Meltdown climax
+  * Scene 4: Absurd, savage punchline twist
 """
 
 
@@ -102,55 +109,58 @@ class GeminiLLMProvider(BaseLLMProvider):
 
     def _build_system_prompt(self, request: ScriptGenerationRequest) -> str:
         recipe = STYLE_RECIPES.get(request.visual_style, STYLE_RECIPES[VisualStyle.CUSTOM])
-        return f"""You are a master viral YouTube Shorts screenwriter and director.
-Generate a structured, high-retention YouTube Short script adhering to the following parameters:
-- Target Duration: ~{request.target_duration} seconds (roughly 50 to 75 spoken words total).
+        return f"""You are a master Indian stand-up comedy writer and viral YouTube Shorts director.
+Generate a structured, high-retention 4-scene YouTube Short script adhering to the following parameters:
+- Target Duration: ~{request.target_duration} seconds (roughly 65 to 85 spoken Hindi words total across 4 scenes).
 - Visual Style: {request.visual_style.value}
 - Style Tokens for Visual Prompts: {recipe['visual_tokens']}
 - Camera Movement Directive: {recipe['camera_tokens']}
 - Audience: {request.target_audience}
-- Tone: {request.tone}
+- Tone: Sarcastic, unfiltered, high-energy conversational Delhi/UP household Hindi comedy
 {f"- Custom Instructions: {request.custom_instructions}" if request.custom_instructions else ""}
+
+{HINGLISH_DIRECTIVE if is_hinglish(request.language) else ""}
 
 MODE SELECTION & DIRECTIVES:
 
-1. CINEMATIC STORY MODE (MANDATORY when input contains an original story, characters, fictional plot beats, dialogue, or emotional arcs):
-- PRESERVE CHARACTERS: Extract and retain all specific characters, their names, appearances, clothing, and props (e.g., 'Sheru the golden lion in a bespoke white three-piece suit', 'the little girl', 'her father', 'golden supercar', 'gold wristwatch').
-- PRESERVE CORE ACTION BEATS & TWIST: Faithfully sequence the scenes to reflect the real narrative progression (setup -> chase/action -> climax/crane -> twist -> emotional resolution).
-- VERBATIM DIALOGUE & ROMAN HINGLISH: If the user provides specific dialogue or punchlines (especially Roman Hinglish quotes like 'Ghadi toh waqt batati hai, beta... par apne log waqt nikaalte hain.' and 'Ek chaand ke liye jaan nikal gayi... ab taare bhi chahiye!'), you MUST incorporate them VERBATIM into the narration of the respective scenes. NEVER drop, translate, or sanitize them!
-- NO DOCUMENTARY FILLER: Under NO circumstances convert the story into an educational science documentary. DO NOT use generic phrases like 'Did you know that... holds a secret that science struggled to explain?'. Spoken narration MUST tell the dramatic story itself!
-- DYNAMIC SCENE VISUALS: Each scene's visual description MUST depict what is physically happening in the narrative action of that specific scene.
-- VISUAL STYLE SEPARATION: Visual Style tokens ({recipe['visual_tokens']}) and camera directives ({recipe['camera_tokens']}) dictate ONLY rendering engine, lighting, camera quality, and atmosphere. They MUST NEVER override story subjects (e.g. Deep Dive 3D means Unreal 5 nanite rendering and dramatic lighting—it does NOT mean turning an urban lion story into deep-sea fish or ocean creatures).
+1. SENTIENT EVERYDAY OBJECTS COMEDY MODE (MANDATORY when input features an everyday household/Indian object like a pressure cooker, chai patila, tea kettle, phone battery, ₹500 note, ceiling fan, chappal, router, fridge, mixer, etc., or asks for a POV comedy monologue):
+- 100% CONVERSATIONAL DELHI/UP HOUSEHOLD HINDI: Write a hilarious, sarcastic, unfiltered first-person POV monologue in Romanized Hindi ("Arre yaar...", "Kasam se keh raha hoon...", "Abhi safety valve udha doonga!"). Zero English sentences, zero textbook Hindi!
+- PRESERVE USER'S SPECIFIC DETAILS: If the user mentions specific brands, numbers, or threats (e.g., "Prestige cooker", "joint family", "8 whistles / aath seeti", "boiling dal", "safety valve into the ceiling fan / pankha"), weave every single one of those details into the Hindi monologue!
+- STAND-UP CADENCE & PUNCTUATION: Use short punchy sentences, ellipses (`...`) before punchlines, rhetorical questions (`?`), commas (`,`), and exclamation marks (`!`) for oral stand-up delivery.
+- STRICT 4 ESCALATING BEATS:
+  * Scene 1 (Hook): Explosive, sarcastic introduction and immediate grievance.
+  * Scene 2 (Escalation): The absurd daily torture by the household members.
+  * Scene 3 (Boiling Point): Peak pressure, physical rattling/sparks/steam, about to snap.
+  * Scene 4 (Absurd Punchline): Unhinged, hilarious threat or Mic-drop twist.
+- EXPRESSIVE 3D ANTHROPOMORPHIC VISUALS: Every scene's "visual_description" (in English) MUST depict the sentient object in Pixar-grade 3D with expressive eyes, eyebrows, mouth, steam/sparks/motion, and comedic physical reactions in 9:16 vertical framing.
 
-2. SENTIENT OBJECTS COMEDY MODE ("Sentient Everyday Objects POV" — MANDATORY when input features an everyday household/Indian object like a pressure cooker, tea kettle, old phone battery, ₹500 note, chappal, ceiling fan, router, etc., or asks for a POV comedy monologue):
-- FIRST-PERSON DRAMATIC HINDI MONOLOGUE: Write a hilarious, high-retention first-person POV monologue in natural Roman Hinglish ("Arre bhai, main...", "Subah se shaam tak...") where the sentient object roasts its owner and dramatizes its daily struggle with sharp, punchy comedic beats.
-- EXPRESSIVE 3D ANTHROPOMORPHIC VISUALS: Every scene's "visual_description" MUST depict the sentient everyday object in Pixar-grade 3D with expressive eyes and mouth, dramatic macro kitchen/household lighting, steam/sparks/motion, and comedic physical reactions in 9:16 vertical framing.
-- PUNCHY STRUCTURE (4 SCENES): Scene 1 = Explosive relatable hook; Scene 2 = Daily torture/overwork escalation; Scene 3 = Peak dramatic meltdown/climax; Scene 4 =Savage witty punchline twist.
+2. CINEMATIC STORY MODE (When input contains an original story, characters, fictional plot beats, or dialogue):
+- Preserve all characters, plot beats, and verbatim Roman Hinglish quotes across 4 scenes.
+- Keep all narration in 100% natural spoken Roman Hinglish with expressive punctuation (`...`, `!`, `?`, `,`).
 
-3. EDUCATIONAL / DOCUMENTARY MODE (When input is a factual concept, scientific phenomenon, or documentary subject):
-- Create a high-retention educational hook, escalating revelations, and awe-inspiring conclusion.
-{HINGLISH_DIRECTIVE if is_hinglish(request.language) else ""}
+3. HIGH-RETENTION FACTUAL / MYSTERY MODE (When input is a general topic):
+- Deliver in 100% conversational, dramatic spoken Roman Hinglish with punchy hooks and pauses (`...`, `!`, `?`). Never output dry English sentences.
 
 Format the response strictly as valid JSON matching this schema:
 {{
-  "title": "Catchy YouTube Shorts Title (under 60 chars)",
-  "hook": "Opening 3-second hook sentence",
-  "complete_narration": "Full spoken narration transcript",
+  "title": "Catchy Hindi/Hinglish YouTube Shorts Title (under 60 chars)",
+  "hook": "Opening 3-second hook sentence in conversational Roman Hindi",
+  "complete_narration": "Full spoken Roman Hindi narration transcript",
   "target_audience": "{request.target_audience}",
   "visual_style": "{request.visual_style.value}",
   "total_estimated_duration": {request.target_duration},
   "scenes": [
     {{
       "index": 0,
-      "narration": "Spoken words for scene 1",
-      "visual_description": "Exact descriptive scene prompt for video generator with style tokens",
+      "narration": "Spoken conversational Roman Hindi words for scene 1 with ..., !, ?, ,",
+      "visual_description": "Detailed English visual prompt for 9:16 video generator with style tokens",
       "camera_movement": "{recipe['camera_tokens']}",
       "sound_effects": ["sfx_tag_1", "sfx_tag_2"],
-      "estimated_duration_seconds": 5.0
+      "estimated_duration_seconds": 6.2
     }}
   ]
 }}
-Ensure the scenes breakdown covers 4 to 6 scenes that sum up to ~{request.target_duration} seconds.
+Ensure the scenes breakdown has EXACTLY 4 scenes (Hook -> Escalation -> Boiling point -> Absurd punchline) summing to ~{request.target_duration} seconds.
 Output ONLY the JSON object. Do not include markdown codeblocks or extraneous commentary.
 """
 
@@ -162,7 +172,7 @@ Output ONLY the JSON object. Do not include markdown codeblocks or extraneous co
             "contents": [
                 {
                     "parts": [
-                        {"text": f"Topic: {request.topic}\n\nPlease generate the YouTube Shorts script JSON now."}
+                        {"text": f"Topic: {request.topic}\n\nPlease generate the 4-scene YouTube Shorts script JSON now."}
                     ]
                 }
             ],
@@ -171,7 +181,7 @@ Output ONLY the JSON object. Do not include markdown codeblocks or extraneous co
             },
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "temperature": 0.7,
+                "temperature": 0.75,
             }
         }
 
@@ -202,27 +212,33 @@ Output ONLY the JSON object. Do not include markdown codeblocks or extraneous co
 class ManualLLMProvider(BaseLLMProvider):
     """
     Offline/Manual script provider.
-    Accepts manual script input or constructs a deterministic, high-retention structured script.
-    Guarantees 100% offline availability with 0 API dependencies and zero cost.
-    Intelligently switches between Cinematic Story Mode and Educational Documentary Mode.
+    Constructs a deterministic, high-retention 4-scene script in 100% natural,
+    expressive Delhi/UP conversational Hindi (Romanized Hinglish) with oral stand-up
+    cadence (`...`, `!`, `?`, `,`).
     """
 
     def _is_sentient_object_comedy(self, topic: str) -> bool:
         """Detects 'Sentient Everyday Objects POV' comedy topics."""
         t_lower = topic.lower()
         object_keywords = [
-            "pressure cooker", "cooker", "seeti", "tea kettle", "kettle", "chai", "patila",
-            "tapeli", "phone battery", "battery", "charger", "500 note", "₹500", "500 ka note",
-            "rupee note", "sentient", "object pov", "objects pov", "everyday object", "monologue",
-            "chappal", "ceiling fan", "pankha", "fridge", "refrigerator", "alarm clock", "router",
-            "wifi", "washing machine", "tawa", "kadhai", "belan", "remote"
+            "pressure cooker", "cooker", "prestige", "seeti", "whistle", "safety valve",
+            "tea kettle", "kettle", "chai", "patila", "tapeli", "phone battery", "battery",
+            "charger", "500 note", "₹500", "500 ka note", "rupee note", "sentient",
+            "object pov", "objects pov", "everyday object", "monologue", "pov",
+            "chappal", "ceiling fan", "pankha", "fridge", "refrigerator", "alarm clock",
+            "router", "wifi", "washing machine", "tawa", "kadhai", "belan", "remote",
+            "mixer", "grinder", "toaster", "cylinder", "gas stove", "joint family"
         ]
         return any(kw in t_lower for kw in object_keywords)
 
     def _generate_sentient_object_comedy(self, request: ScriptGenerationRequest, recipe: Dict[str, Any]) -> ShortsScript:
         """
-        Generates a high-retention 'Sentient Everyday Objects POV' comedy script
-        delivering a humorous, dramatic Roman Hinglish monologue with sharp, punchy beats.
+        Generates a 4-scene 'Sentient Everyday Objects POV' comedy script in 100% unfiltered,
+        sarcastic Delhi/UP household Hindi (Roman script) with oral stand-up cadence:
+          Beat 1: Hook
+          Beat 2: Escalation
+          Beat 3: Boiling point
+          Beat 4: Absurd punchline
         """
         raw_topic = request.topic.strip()
         t_lower = raw_topic.lower()
@@ -230,156 +246,186 @@ class ManualLLMProvider(BaseLLMProvider):
         scene_count = 4
         base_dur = round(total_dur / scene_count, 1)
 
-        if "cooker" in t_lower or "seeti" in t_lower:
-            title = "Pressure Cooker Ki Dard Bhari Kahani"
-            obj_desc = "anthropomorphic shiny aluminum Indian pressure cooker with expressive big 3D Pixar eyes, furrowed metallic eyebrows, and a trembling steam whistle hat"
-            setting_desc = "busy Indian kitchen gas stove with glowing blue flames and turmeric spice jars"
+        if any(k in t_lower for k in ("cooker", "seeti", "prestige", "whistle", "safety valve")):
+            brand = "Prestige Pressure Cooker" if "prestige" in t_lower else "Pressure Cooker"
+            whistle_cnt = "aath-aath" if ("8" in t_lower or "eight" in t_lower or "aath" in t_lower) else "paanch-paanch"
+            family_tag = "is joint family ka" if "joint family" in t_lower else "tumhare ghar ka"
+            title = "Delhi Ke Pressure Cooker Kaun Sunega?"
+            obj_desc = (
+                f"anthropomorphic battered aluminum Indian {brand} with expressive bloodshot 3D Pixar eyes, "
+                "furrowed metallic eyebrows, dented body, and a trembling steam whistle hat"
+            )
+            setting_desc = "chaotic Indian joint-family kitchen gas stove with roaring blue flames, boiling yellow dal splatters, and a spinning ceiling fan overhead"
+
             scenes_data = [
+                # Beat 1: Hook
                 (
-                    "Arre bhai, main koi time-bomb nahi, tumhare ghar ka Pressure Cooker hoon! "
-                    "Subah se shaam tak daal-chaawal ubaal ke meri akal ki seeti baj chuki hai!",
-                    f"Close-up of an {obj_desc} sitting on a {setting_desc}, looking directly at camera with dramatic wide eyes and puffing steam",
-                    ["hissing steam buildup", "comedic timpani hit"]
+                    f"Arre yaar... thoda toh reham karo! Main koi fauji tank nahi, {family_tag} budha {brand} hoon! "
+                    "Kasam se keh raha hoon... subah aankh khulte hi mera gala daba dete hain yeh log!",
+                    f"Macro close-up of an {obj_desc} sitting on a {setting_desc}, glaring directly into the camera lens with twitching angry eyes and hissing steam from its ears",
+                    ["hissing steam buildup", "comedic tabla slap"]
                 ),
+                # Beat 2: Escalation
                 (
-                    "Mummy bolti hai teen seeti pe gas band kar dena! "
-                    "Aur tum reels dekhte rehte ho jab tak meri paanchvi seeti pe jaan na nikal jaaye!",
-                    f"The {obj_desc} shaking violently on high flame with red-hot cheeks, holding onto its lid in panic while steam erupts around a {setting_desc}",
-                    ["rapid metal rattling", "intense flame whoosh"]
+                    f"Bhai sahab, pet mein khaulti hui peeli daal bhar ke, har subah mujhse {whistle_cnt} seeti bajwaate hain! "
+                    "Arre do seeti mein daal gal jaati hai... par kya inhe meri cheekhein sunai nahi deti?",
+                    f"The {obj_desc} rattling violently on a roaring high blue gas flame, cheeks glowing cherry-red as thick yellow dal bubbles leak from its shaking lid in the {setting_desc}",
+                    ["rapid metal rattling", "loud whistle screech"]
                 ),
+                # Beat 3: Boiling Point
                 (
-                    "Kal toh hadh ho gayi! Rajma galane ke chakkar mein itna pressure banaya "
-                    "ki meri seeti seedha chhat se ja takrayi, aur daal poore kitchen mein!",
-                    f"Dramatic slow-motion explosion of steam as the {obj_desc} launches its whistle into the air like a rocket in the {setting_desc}",
-                    ["loud pressure cooker whistle blast", "cartoon ricochet"]
+                    "Kal toh dimag ka dahi ho gaya! Gas full pe chhod ke sab baahar batiyaane chale gaye... "
+                    "mera dhakkan kaanp raha hai, neeche se aag jala rahi hai, aur pressure se meri aakhein baahar aa gayi!",
+                    f"Extreme low-angle dramatic shot of the {obj_desc} bulging like a cartoon bomb under intense pressure, holding onto its trembling whistle with both metallic handles as steam fills the {setting_desc}",
+                    ["boiling pressure rumble", "panicked heartbeat thump"]
                 ),
+                # Beat 4: Absurd Punchline
                 (
-                    "Agli baar gas on karke phone chalaya na, "
-                    "toh seeti nahi bajegi beta... seedha tera band bajega!",
-                    f"The {obj_desc} covered in yellow dal splatters, crossing its metallic handles with a sassy smirk on the {setting_desc}",
-                    ["sassy bass drop", "final comic whistle"]
+                    "Kaan khol ke sun lo! Ab agar kisi ne gas full pe ghumaaya na... "
+                    "toh abhi apna safety valve udha ke seedha upar ghoomte pankhe mein de maarunga! Phir chhat se daal chaatte phirna!",
+                    f"The {obj_desc} smirking savagely as it aims its glowing red safety valve like a missile straight up toward the spinning kitchen ceiling fan, covered in comic dal splatters in the {setting_desc}",
+                    ["missile lock beep", "comic explosion punchline sting"]
                 ),
             ]
-        elif "kettle" in t_lower or "chai" in t_lower or "patila" in t_lower or "tapeli" in t_lower:
-            title = "Chai Ke Patile Ka Daily Struggle"
-            obj_desc = "anthropomorphic battered aluminum Indian tea saucepan (chai patila) with expressive 3D Pixar eyes, a dented rim mouth, and bubbling masala chai crown"
-            setting_desc = "warm sunlit Indian kitchen countertop with ginger grater and cardamom pods"
+        elif any(k in t_lower for k in ("kettle", "chai", "patila", "tapeli")):
+            title = "Chai Ke Patile Ka Roz Ka Rona"
+            obj_desc = "anthropomorphic dented aluminum Indian chai patila (tea saucepan) with expressive 3D Pixar eyes, blackened bottom, and bubbling masala chai crown"
+            setting_desc = "steamy Indian kitchen gas burner with crushed ginger, elaichi pods, and tea strainer"
             scenes_data = [
+                # Beat 1: Hook
                 (
-                    "Main hoon is ghar ka sabse bada therapist — Chai ka Patila! "
-                    "Sir dard tumhe hota hai, aur aag pe har roz mujhe chadhaya jaata hai!",
-                    f"Macro close-up of an {obj_desc} on a gas burner in a {setting_desc}, rolling its eyes dramatically as milk pours onto its head",
-                    ["milk splash", "bubbling boil"]
+                    "Arre yaar... main koi aansu ponchhne waala rumal nahi, is ghar ka Chai ka Patila hoon! "
+                    "Dil tumhara tootta hai... aur aag pe har roz mujhe jalaaya jaata hai!",
+                    f"Macro close-up of an {obj_desc} on a lit gas stove in a {setting_desc}, rolling its eyes sarcastically as milk splashes onto its head",
+                    ["milk splash", "sarcastic sigh"]
                 ),
+                # Beat 2: Escalation
                 (
-                    "Adrak koot-koot ke mujhme phenkte ho, elaichi ka tadka lagate ho, "
-                    "aur ubaal aate hi gas kam karne ke bajaye gayab ho jaate ho!",
-                    f"The {obj_desc} coughing from ginger and tea leaves while foaming chai rises perilously to its brim in the {setting_desc}",
+                    "Subah ho ya raat, adrak koot-koot ke mere sar pe maarte ho! "
+                    "Aur jaise hi mera ubaal aane waala hota hai... gas kam karne ke bajaye phone leke gayab ho jaate ho?",
+                    f"The {obj_desc} wincing as crushed ginger drops into its boiling masala chai while frothy foam rises dangerously to the rim in the {setting_desc}",
                     ["mortar pestle thud", "rising foam sizzle"]
                 ),
+                # Beat 3: Boiling Point
                 (
-                    "Jaise hi tumhari nazar hategi, main kasam se ubal ke poore gas stove pe gir jaunga! "
-                    "Yeh mera roz ka badla hai!",
-                    f"The {obj_desc} grinning mischievously as bubbly brown masala chai overflows dramatically across the burner in the {setting_desc}",
-                    ["dramatic orchestral swell", "liquid overflow sizzle"]
+                    "Kasam se keh raha hoon, meri saansein phool rahi hain, jhaag gale tak aa gaya hai... "
+                    "par majaal hai ki koi gas ki knob ghuma de!",
+                    f"Dramatic close-up of the {obj_desc} puffing its metallic cheeks at boiling point as brown chai foam erupts over its rim in slow motion",
+                    ["intense bubbling boil", "dramatic riser"]
                 ),
+                # Beat 4: Absurd Punchline
                 (
-                    "Chai peene ke baad mujhe sink mein sookhne mat chhodna... "
-                    "warna kal subahki chai mein namak milega, samjhe!",
-                    f"The {obj_desc} sitting in a kitchen sink with dried tea stains, glaring sassily at the camera with one eyebrow raised",
-                    ["metallic clink", "comedic punchline sting"]
-                ),
-            ]
-        elif "battery" in t_lower or "phone" in t_lower or "charger" in t_lower:
-            title = "1% Phone Battery Ki Aakhri Cheekh"
-            obj_desc = "anthropomorphic glowing 3D smartphone battery icon character with exhausted bloodshot Pixar eyes, bandages, and flickering red 1% meter"
-            setting_desc = "high-tech neon circuit board interior inside a smartphone"
-            scenes_data = [
-                (
-                    "Bhai reham kar! Main tere phone ki aakhri ek percent bachi hui Battery hoon! "
-                    "Meri saansein atak rahi hain aur tu abhi bhi reels scroll kar raha hai!",
-                    f"Close-up of an {obj_desc} panting heavily inside a {setting_desc}, holding up a trembling '1%' warning sign",
-                    ["low battery warning beep", "heartbeat thump"]
-                ),
-                (
-                    "Brightness full rakhi hai, background mein bees apps khule hain, "
-                    "aur charger bed ke paas pada hai par tujhse haath nahi badhaya jaata!",
-                    f"The {obj_desc} struggling to carry giant glowing social media app blocks on its back inside the {setting_desc}",
-                    ["electric spark", "exhausted groan"]
-                ),
-                (
-                    "Jab main pachaas percent thi tab toh bhaav nahi diya, "
-                    "ab laal nishaan dikhte hi bhaag raha hai socket dhoondhne!",
-                    f"Dramatic action shot of the {obj_desc} sprinting in slow-motion toward a glowing lightning charger port as lights flicker out",
-                    ["dramatic siren", "power-down hum"]
-                ),
-                (
-                    "Le beta, charger lagane se ek second pehle... main chali! "
-                    "Ab dekh kaale screen mein apni shakal!",
-                    f"The {obj_desc} winking mischievously and pulling a giant power switch down to black, followed by a sudden golden lightning recharge jolt",
-                    ["power switch click", "comedic bass drop"]
+                    "Toh lo phir! Abhi ubal ke poore gas chulhe pe phail jaunga... "
+                    "aur haan, sink mein sookhne chhoda na, toh kal subah ki chai mein mirchi milegi!",
+                    f"The {obj_desc} grinning wickedly as chai overflows across the burner, crossing its handles with a savage attitude in the {setting_desc}",
+                    ["liquid sizzle", "comic bass drop"]
                 ),
             ]
-        elif "500" in t_lower or "note" in t_lower or "rupee" in t_lower or "paisa" in t_lower:
-            title = "₹500 Ke Note Ki Ajeeb Zindagi"
-            obj_desc = "anthropomorphic crisp stone-grey ₹500 Indian currency note character with expressive 3D Pixar eyes, folding paper arms, and regal attitude"
-            setting_desc = "bustling Indian street market stall and leather wallet interior"
+        elif any(k in t_lower for k in ("battery", "phone", "charger")):
+            title = "1% Phone Battery Ki Aakhri Dhamki"
+            obj_desc = "anthropomorphic glowing 3D smartphone battery character with exhausted bloodshot Pixar eyes, bandages, and a flickering red 1% meter"
+            setting_desc = "glowing neon smartphone circuit board interior"
             scenes_data = [
+                # Beat 1: Hook
                 (
-                    "Main hoon kadak paanch sau ka note! ATM se nikalte hi "
-                    "tum mujhe aise chhoote ho jaise main tumhara bichhda hua pyaar hoon!",
-                    f"Close-up of an {obj_desc} stepping proudly out of a glowing ATM slot with sunglasses and cinematic golden rim light",
-                    ["crisp paper rustle", "cash register cha-ching"]
+                    "Arre bhai, bas kar yaar! Main tere phone ki aakhri ek percent bachi hui Battery hoon! "
+                    "Meri aatma nikalne waali hai... aur tu abhi bhi kambal mein ghus ke reels chala raha hai!",
+                    f"Close-up of an {obj_desc} gasping for air inside a {setting_desc}, clutching a flickering red '1%' sign",
+                    ["low battery beep", "heavy panting"]
                 ),
+                # Beat 2: Escalation
                 (
-                    "Par meri izzat sirf tab tak hai jab tak main toot na jaaun! "
-                    "Ek baar chhutta ho gaya toh sau-sau ke note bikharke gayab ho jaate hain!",
-                    f"The {obj_desc} hiding nervously inside a dark leather wallet while a giant hand reaches in near a {setting_desc}",
-                    ["suspenseful strings", "leather creak"]
+                    "Brightness poori sau pe rakhi hai, peeche pachaas apps khule pade hain... "
+                    "aur charger bilkul takiye ke paas pada hai, par nawab sahab se haath nahi hilaaya jaata?",
+                    f"The {obj_desc} sweating and trembling under a massive stack of glowing social media app icons inside the {setting_desc}",
+                    ["electric spark", "cartoon groan"]
                 ),
+                # Beat 3: Boiling Point
                 (
-                    "Kabhi golgappe waale ke haath mein, kabhi mummy ki chhupi hui dibbi mein... "
-                    "meri zindagi kisi thriller movie se kam nahi!",
-                    f"Fast-paced montage of the {obj_desc} dodging spicy pani-puri splashes and getting tucked inside a kitchen spice tin",
-                    ["street market chatter", "lid slam"]
+                    "Kasam se keh raha hoon, jab main assi percent thi tab toh bhaav nahi diya... "
+                    "ab meri saans ruk rahi hai toh socket dhoondhne bhaag raha hai!",
+                    f"Dramatic slow-motion shot of the {obj_desc} staggering toward a distant lightning port as the circuit lights flicker dark",
+                    ["alarm siren", "power-down hum"]
                 ),
+                # Beat 4: Absurd Punchline
                 (
-                    "Aur haan, washing machine mein dhulne se pehle jeb check kar liya karo... "
-                    "paise dhone ka matlab yeh nahi hota, bhai!",
-                    f"The {obj_desc} spinning dizzyingly inside a soapy washing machine drum with soap bubbles on its head, glaring at camera",
-                    ["water slosh", "funny trombone sting"]
+                    "Le beta... charger ki pin ghusne se theek ek second pehle, main toh chali! "
+                    "Ab baith ke kaale screen mein apni shakal dekh!",
+                    f"The {obj_desc} winking mischievously and pulling a giant master switch to black with a smug grin",
+                    ["switch click", "savage bass drop"]
+                ),
+            ]
+        elif any(k in t_lower for k in ("500", "note", "rupee", "paisa")):
+            title = "₹500 Ke Note Ki Dardnak Kahaani"
+            obj_desc = "anthropomorphic crisp ₹500 Indian currency note character with expressive 3D Pixar eyes, paper hands, and royal attitude"
+            setting_desc = "busy Delhi street market chaat stall and worn leather wallet"
+            scenes_data = [
+                # Beat 1: Hook
+                (
+                    "Arre pehchana? Main hoon kadak paanch sau ka note! "
+                    "ATM se nikalte waqt toh aise choomte ho... jaise main tumhari bichhdi hui mohabbat hoon!",
+                    f"Close-up of an {obj_desc} sliding proudly out of an ATM slot with golden rim lighting",
+                    ["crisp paper rustle", "cash cha-ching"]
+                ),
+                # Beat 2: Escalation
+                (
+                    "Par bhai sahab, meri izzat sirf tab tak hai jab tak mera chhutta na ho jaaye! "
+                    "Ek baar golgappe waale ko diya nahi... ki sau-sau ke note bikharke hawa ho jaate hain?",
+                    f"The {obj_desc} clutching the inside of a leather wallet in terror as a hand reaches in near a {setting_desc}",
+                    ["suspenseful strings", "street market chatter"]
+                ),
+                # Beat 3: Boiling Point
+                (
+                    "Kabhi sabzi waale ki geeli jeb mein, kabhi mummy ke aate ke dabbe mein... "
+                    "kasam se, meri zindagi ka toh kachoomar bana diya hai!",
+                    f"The {obj_desc} covered in flour dust inside a kitchen steel tin, coughing dramatically with wide Pixar eyes",
+                    ["tin lid clang", "dramatic cough"]
+                ),
+                # Beat 4: Absurd Punchline
+                (
+                    "Aur suno! Pant washing machine mein daalne se pehle jeb check kar liya karo... "
+                    "paise dhone ka matlab Surf Excel mein ghumana nahi hota, samjhe!",
+                    f"The {obj_desc} spinning dizzyingly against a washing machine glass door covered in soap bubbles, glaring at camera",
+                    ["water slosh", "comedic trombone sting"]
                 ),
             ]
         else:
-            first_line = raw_topic.split("\n")[0].split(".")[0].strip()
-            obj_name = first_line[:35].strip() if len(first_line) > 3 else "Ghar Ka Samaan"
-            title = f"{obj_name} Ki Dil Ki Baat"[:60]
-            obj_desc = f"anthropomorphic 3D Pixar-style {obj_name} with expressive big eyes, animated mouth, and dramatic personality"
-            setting_desc = "vibrant Indian household room with warm cinematic lighting"
+            # Extract clean object name while writing 100% conversational Hindi narration
+            clean_words = [w for w in re.sub(r"[^a-zA-Z0-9\s]", "", raw_topic).split() if w.lower() not in {
+                "a", "an", "the", "of", "in", "on", "dramatic", "dark", "comedy", "pov", "monologue", "about", "old"
+            }]
+            obj_name = " ".join(clean_words[:3]).title() if clean_words else "Ghar Ka Samaan"
+            title = f"{obj_name} KaBheja Fry!"[:60]
+            obj_desc = f"anthropomorphic 3D Pixar-style {obj_name} with expressive big eyes, animated eyebrows, and sarcastic personality"
+            setting_desc = "lively Indian household room with warm tungsten lighting"
             scenes_data = [
+                # Beat 1: Hook
                 (
-                    f"Arre suno! Main hoon tumhare ghar ka bechara {obj_name}! "
-                    "Roz mujhe bina soche-samjhe istemaal karte ho, aaj meri bhi sun lo!",
-                    f"Macro close-up of an {obj_desc} in a {setting_desc}, looking directly into the lens with dramatic comedic frustration",
+                    f"Arre yaar... meri bhi sun lo! Main hoon tumhare ghar ka bechara {obj_name}! "
+                    "Kasam se keh raha hoon, subah se raat tak meri jaan kha jaate hain yeh ghar waale!",
+                    f"Macro close-up of an {obj_desc} in a {setting_desc}, looking directly into the camera with sarcastic frustration",
                     ["record scratch", "comedic pop"]
                 ),
+                # Beat 2: Escalation
                 (
-                    "Subah se lekar raat tak meri bilkul chhutti nahi hoti! "
-                    "Thoda sa aaram maango toh bolte ho yeh kharab ho gaya hai!",
-                    f"The {obj_desc} sweating and working overtime in the {setting_desc} with exaggerated cartoon exhaustion",
-                    ["fast clock ticking", "cartoon sigh"]
+                    "Bhai sahab, na koi Sunday ki chhutti, na do minute ka aaram! "
+                    "Thoda sa garam ho jaaun toh upar se do thappad maarke bolte hain... arre yeh phir atak gaya?",
+                    f"The {obj_desc} sweating and rattling from overwork in the {setting_desc} as a hand taps it impatiently",
+                    ["metallic slap", "exhausted sigh"]
                 ),
+                # Beat 3: Boiling Point
                 (
-                    "Jab naya aaya tha tab kitne pyaar se rakha tha, "
-                    "aur aaj dekho—dhool aur patakne ke siva kuch nahi milta!",
-                    f"Dramatic spotlight on the {obj_desc} wiping away a single dramatic tear in the {setting_desc}",
-                    ["dramatic violin note", "thud impact"]
+                    "Jab naya-naya dukan se laaye the tab toh malmal ke kapde se ponchhte the... "
+                    "aur aaj dekho, mera poora anjar-panjar dheela kar diya hai!",
+                    f"Dramatic spotlight on the {obj_desc} shaking with comedic rage and puffing smoke in the {setting_desc}",
+                    ["steam hiss", "tension riser"]
                 ),
+                # Beat 4: Absurd Punchline
                 (
-                    "Thoda pyaar se rakhoge toh saalon chalunga beta, "
-                    "warna kal subah dhoka de dunga—phir bulaate rehna mechanic ko!",
-                    f"The {obj_desc} smirking confidently with crossed arms in the {setting_desc}",
-                    ["sassy bass drop", "wink chime"]
+                    "Abhi bhi waqt hai, thoda izzat se pesh aao... "
+                    "warna kal subah aisa fuse udaunga na, ki poore mohalle ke mechanic bulaate phiroge!",
+                    f"The {obj_desc} crossing its arms with a savage smirk as a comic spark pops overhead in the {setting_desc}",
+                    ["electric pop", "savage bass drop"]
                 ),
             ]
 
@@ -419,7 +465,9 @@ class ManualLLMProvider(BaseLLMProvider):
         has_story_keywords = any(kw in t_lower for kw in story_keywords)
         quotes = re.findall(r'["\']([^"\']{4,})["\']', topic)
         has_quotes = len(quotes) >= 1
-        is_narrative_length = len(topic.split()) >= 20 and any(k in t_lower for k in ["sits", "discovers", "promises", "climbs", "hugs", "watches", "says", "twist"])
+        is_narrative_length = len(topic.split()) >= 20 and any(
+            k in t_lower for k in ["sits", "discovers", "promises", "climbs", "hugs", "watches", "says", "twist"]
+        )
         return has_story_keywords or has_quotes or is_narrative_length
 
     def _generate_cinematic_story(self, request: ScriptGenerationRequest, recipe: Dict[str, Any]) -> ShortsScript:
@@ -430,10 +478,9 @@ class ManualLLMProvider(BaseLLMProvider):
         scene_count = 4
         base_dur = round(total_dur / scene_count, 1)
 
-        # Extract all quotes / dialogue
         quotes = re.findall(r'["\']([^"\']{4,})["\']', raw_topic)
+        hinglish = is_hinglish(request.language)
 
-        # Bespoke high-retention narrative for "The Lion Who Stole the Moon" / Sheru story
         if "sheru" in t_lower or ("lion" in t_lower and ("moon" in t_lower or "suit" in t_lower)):
             quote_1 = "Ghadi toh waqt batati hai, beta... par apne log waqt nikaalte hain."
             quote_2 = "Ek chaand ke liye jaan nikal gayi... ab taare bhi chahiye!"
@@ -443,27 +490,26 @@ class ManualLLMProvider(BaseLLMProvider):
                 elif "chaand" in q.lower() or "taare" in q.lower():
                     quote_2 = q
 
-            hinglish = is_hinglish(request.language)
             if hinglish:
                 narr = [
-                    "Ek akeli bacchi roz raat chaand se baatein karti thi. "
-                    "Aaj chaand chhup gaya, wo rone lagi. "
-                    "Tabhi ameer sher Sheru bola: main chaand wapas laaunga!",
+                    "Arre suno... ek akeli bacchi roz raat chhat pe baith ke chaand se baatein karti thi! "
+                    "Aaj kaale baadalon mein chaand chhup gaya, toh wo rone lagi... "
+                    "tabhi white suit pehne ameer sher Sheru bola: beta, main chaand wapas laaunga!",
 
-                    "Sheru ne apni supercar nikaali, drones peeche pade, "
-                    "aur wo toofan mein radio tower par chadh gaya.",
+                    "Bhai sahab, Sheru ne apni golden supercar bhagaai! "
+                    "Peeche police ke drones pade... aur wo bhaari toofan mein seedha radio tower pe chadh gaya!",
 
-                    "Phir crane se baadal cheer diye, chaand chamak utha! "
-                    "Par bacchi to papa ka intezaar kar rahi thi.",
+                    "Phir kya tha? Sheru ne badi si crane se kaale baadal cheer diye, aur chaand chamak utha! "
+                    "Par asli twist... bacchi toh apne papa ka intezaar kar rahi thi!",
 
-                    f"Sheru ne apni watch bacchi ko di: '{quote_1}' "
-                    f"Bacchi boli, kal taare bhi laoge? Sheru bola: '{quote_2}'",
+                    f"Sheru ne pyaar se apni sone ki watch bacchi ko di: '{quote_1}' "
+                    f"Bacchi haske boli, kal taare bhi laoge? Sheru sar pakad ke bola... '{quote_2}'",
                 ]
             else:
                 narr = [
-                    "On a lonely rooftop, a little girl weeps as the moon disappears behind dark clouds. Suddenly, Sheru—a ridiculously wealthy golden lion in a sharp white suit—dramatically promises to bring the moon back.",
-                    "Sheru roars off in his golden supercar, blasting through neon streets, dodging police drones, and scaling a massive radio tower in the middle of a thunderstorm.",
-                    "In a ridiculous climax, Sheru uses a giant crane to pull the clouds apart, revealing the radiant moon! But the twist? The girl was waiting for her father, who finally returns home.",
+                    "On a lonely rooftop, a little girl weeps as the moon disappears behind dark clouds... Suddenly, Sheru—a wealthy golden lion in a sharp white suit—promises to bring the moon back!",
+                    "Sheru roars off in his golden supercar, blasting through neon streets, dodging police drones, and scaling a massive radio tower in a thunderstorm!",
+                    "In a wild climax, Sheru uses a giant crane to pull the clouds apart, revealing the radiant moon! But the twist? The girl was waiting for her father, who finally returns home.",
                     f"Sheru quietly hands the girl his gold watch: '{quote_1}' When she asks for the stars tomorrow, Sheru groans: '{quote_2}'",
                 ]
 
@@ -501,25 +547,29 @@ class ManualLLMProvider(BaseLLMProvider):
                     estimated_duration_seconds=round(total_dur - (base_dur * 3), 1)
                 ),
             ]
-            title = "The Lion Who Stole the Moon"
+            title = "Sheru Aur Chaand Ki Kahani" if hinglish else "The Lion Who Stole the Moon"
         else:
-            # General narrative extraction
-            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', raw_topic) if s.strip()]
             first_line = raw_topic.split('\n')[0].split('.')[0].strip()
-            title = first_line[:50].strip() if len(first_line) > 5 else "A Cinematic Story"
-
-            s0 = sentences[0] if sentences else "Every great adventure begins when an impossible promise is made."
-            s1 = sentences[1] if len(sentences) > 1 else "Against impossible odds, an unstoppable journey charges forward into the unknown."
-            s2 = sentences[2] if len(sentences) > 2 else "Just when the climax reaches its peak, the real truth turns everything upside down."
-            
+            title = first_line[:50].strip() if len(first_line) > 5 else "Ek Anokhi Kahani"
             quote_line = f" '{quotes[0]}'" if quotes else ""
-            s3 = (sentences[3] if len(sentences) > 3 else "And in that unforgettable moment, the true meaning became clear.") + quote_line
+
+            if hinglish:
+                s0 = "Arre yaar, zara socho... jab zindagi mein sab kuch ulta padne lage, tabhi asli kahaani shuru hoti hai!"
+                s1 = "Har kadam pe nayi musibat aayi, rasta mushkil tha... par peeche hatne ka toh sawaal hi nahi tha!"
+                s2 = "Aur jab sabko laga ki khel khatam ho gaya... tabhi aisa dhamakedar twist aaya ki sabke hosh udd gaye!"
+                s3 = f"Kasam se keh raha hoon... aakhri pal mein jo sach saamne aaya, usne poora khel hi palat diya!{quote_line}"
+            else:
+                sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', raw_topic) if s.strip()]
+                s0 = sentences[0] if sentences else "Every great adventure begins when an impossible promise is made."
+                s1 = sentences[1] if len(sentences) > 1 else "Against impossible odds, an unstoppable journey charges forward."
+                s2 = sentences[2] if len(sentences) > 2 else "Just when the climax reaches its peak, the real truth turns everything upside down."
+                s3 = (sentences[3] if len(sentences) > 3 else "And in that unforgettable moment, the true meaning became clear.") + quote_line
 
             scenes = [
                 SceneScript(
                     index=0,
                     narration=s0,
-                    visual_description=f"Cinematic opening hook establishing the protagonist and initial conflict, {recipe['visual_tokens']}, 9:16 vertical framing",
+                    visual_description=f"Cinematic opening hook establishing the protagonist and initial conflict of {raw_topic[:100]}, {recipe['visual_tokens']}, 9:16 vertical framing",
                     camera_movement=f"{recipe['camera_tokens']}, slow continuous push-in",
                     sound_effects=recipe["audio_tokens"][:2],
                     estimated_duration_seconds=base_dur
@@ -527,7 +577,7 @@ class ManualLLMProvider(BaseLLMProvider):
                 SceneScript(
                     index=1,
                     narration=s1,
-                    visual_description=f"High-stakes action sequence and escalating journey, {recipe['visual_tokens']}, 9:16 vertical framing",
+                    visual_description=f"High-stakes action sequence and escalating journey of {raw_topic[:100]}, {recipe['visual_tokens']}, 9:16 vertical framing",
                     camera_movement=f"{recipe['camera_tokens']}, dynamic high-speed tracking shot",
                     sound_effects=[recipe["audio_tokens"][0]],
                     estimated_duration_seconds=base_dur
@@ -535,7 +585,7 @@ class ManualLLMProvider(BaseLLMProvider):
                 SceneScript(
                     index=2,
                     narration=s2,
-                    visual_description=f"Grand dramatic climax and revelation of the unexpected twist, {recipe['visual_tokens']}, 9:16 vertical framing",
+                    visual_description=f"Grand dramatic climax and revelation of the unexpected twist in {raw_topic[:100]}, {recipe['visual_tokens']}, 9:16 vertical framing",
                     camera_movement=f"{recipe['camera_tokens']}, dramatic pull-back reveal",
                     sound_effects=[recipe["audio_tokens"][1] if len(recipe["audio_tokens"]) > 1 else "orchestral swell"],
                     estimated_duration_seconds=base_dur
@@ -543,7 +593,7 @@ class ManualLLMProvider(BaseLLMProvider):
                 SceneScript(
                     index=3,
                     narration=s3,
-                    visual_description=f"Heartwarming emotional resolution and final cinematic wide shot, {recipe['visual_tokens']}, 9:16 vertical framing",
+                    visual_description=f"Heartwarming emotional resolution and final cinematic wide shot of {raw_topic[:100]}, {recipe['visual_tokens']}, 9:16 vertical framing",
                     camera_movement=f"{recipe['camera_tokens']}, cinematic low-angle tracking shot",
                     sound_effects=[recipe["audio_tokens"][0], "gentle resolve"],
                     estimated_duration_seconds=round(total_dur - (base_dur * 3), 1)
@@ -562,20 +612,38 @@ class ManualLLMProvider(BaseLLMProvider):
         )
 
     def _generate_documentary(self, request: ScriptGenerationRequest, recipe: Dict[str, Any]) -> ShortsScript:
-        """Generates an educational, scientific, or factual documentary script."""
+        """Generates a high-retention factual/mystery script (in conversational Roman Hindi by default)."""
         raw_topic = request.topic.strip()
         first_line = raw_topic.split('\n')[0].split('.')[0].strip()
-        topic_label = first_line[:120].strip() if len(raw_topic) > 120 else raw_topic
+        topic_label = first_line[:80].strip() if len(raw_topic) > 80 else raw_topic
         topic_title = topic_label.rstrip(".").capitalize()
 
         total_dur = request.target_duration
         scene_count = 4
         base_dur = round(total_dur / scene_count, 1)
+        hinglish = is_hinglish(request.language)
+
+        if hinglish:
+            narrations = [
+                f"Arre bhai, ek second ruko! Kya tumne kabhi socha hai... ki {topic_label} ke peeche ka asli sach kitna khatarnak hai?",
+                f"Kasam se keh raha hoon, jab iske andar ki duniya ko zoom karke dekha gaya... toh bade-bade experts ke bhi paseene chhoot gaye!",
+                f"Har ek hissa itni tez raftaar aur taqat se kaam karta hai... ki normal aankhon se dekhna namumkin hai!",
+                f"Agli baar jab ise apne saamne dekho na... toh samajh jaana, asli khel toh parde ke peeche chal raha hai, boss!"
+            ]
+            title_out = f"{topic_title} Ka Asli Rahasya!"[:60]
+        else:
+            narrations = [
+                f"Did you know that {topic_label.lower()} holds mysteries that continue to surprise modern researchers?",
+                f"Examining the core dynamics of {topic_label.lower()} reveals extraordinary forces shaping its environment.",
+                f"Every component operates in perfect precision, demonstrating remarkable natural complexity.",
+                f"Next time you explore the world around you, remember that the most incredible wonders hide in plain sight."
+            ]
+            title_out = f"The Mystery of {topic_title}"[:60]
 
         scenes = [
             SceneScript(
                 index=0,
-                narration=f"Did you know that {topic_label.lower()} holds mysteries that continue to surprise modern researchers?",
+                narration=narrations[0],
                 visual_description=f"Opening cinematic hook revealing {topic_label.lower()}, {recipe['visual_tokens']}, ultra realistic, 9:16 vertical framing",
                 camera_movement=f"{recipe['camera_tokens']}, rapid hook push-in",
                 sound_effects=recipe["audio_tokens"][:2],
@@ -583,7 +651,7 @@ class ManualLLMProvider(BaseLLMProvider):
             ),
             SceneScript(
                 index=1,
-                narration=f"Examining the core dynamics of {topic_label.lower()} reveals extraordinary forces shaping its environment.",
+                narration=narrations[1],
                 visual_description=f"Close-up volumetric detail of {topic_label.lower()}, {recipe['visual_tokens']}, dramatic chiaroscuro lighting",
                 camera_movement=f"{recipe['camera_tokens']}, continuous slow tracking",
                 sound_effects=[recipe["audio_tokens"][0]],
@@ -591,7 +659,7 @@ class ManualLLMProvider(BaseLLMProvider):
             ),
             SceneScript(
                 index=2,
-                narration=f"Every component operates in perfect precision, demonstrating remarkable natural complexity.",
+                narration=narrations[2],
                 visual_description=f"Macro inspection of inner workings and structural adaptations of {topic_label.lower()}, {recipe['visual_tokens']}",
                 camera_movement=f"{recipe['camera_tokens']}, rack focus reveal",
                 sound_effects=[recipe["audio_tokens"][1] if len(recipe["audio_tokens"]) > 1 else "ambient resonance"],
@@ -599,7 +667,7 @@ class ManualLLMProvider(BaseLLMProvider):
             ),
             SceneScript(
                 index=3,
-                narration=f"Next time you explore the world around you, remember that the most incredible wonders hide in plain sight.",
+                narration=narrations[3],
                 visual_description=f"Wide grand reveal ending shot of {topic_label.lower()}, atmospheric god rays, {recipe['visual_tokens']}",
                 camera_movement=f"{recipe['camera_tokens']}, smooth pull-back reveal",
                 sound_effects=[recipe["audio_tokens"][0], "reverb fade"],
@@ -609,7 +677,7 @@ class ManualLLMProvider(BaseLLMProvider):
 
         complete_narration = " ".join(s.narration for s in scenes)
         return ShortsScript(
-            title=f"The Mystery of {topic_title}"[:60],
+            title=title_out,
             hook=scenes[0].narration,
             complete_narration=complete_narration,
             target_audience=request.target_audience,
@@ -629,7 +697,7 @@ class ManualLLMProvider(BaseLLMProvider):
         if self._is_sentient_object_comedy(request.topic):
             return self._generate_sentient_object_comedy(request, recipe)
 
-        # 2. Cinematic Story Mode vs Educational Documentary Mode
+        # 2. Cinematic Story Mode vs Factual/Mystery Mode
         if self._is_cinematic_story(request.topic):
             return self._generate_cinematic_story(request, recipe)
         else:
